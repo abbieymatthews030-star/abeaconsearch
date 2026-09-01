@@ -1,0 +1,85 @@
+# Production deployment for Beacon Search on a single Linux host.
+#
+#   Beacon (Fastify + web UI)  ──internal──►  Caddy  ──:80/:443──►  the internet
+#
+# Caddy terminates TLS and auto-renews Let's Encrypt certificates with no cron
+# job. Beacon itself is never published on a host port — it is only reachable
+# through Caddy on the private compose network.
+#
+# Usage:
+#   cd deploy
+#   cp beacon.env.example beacon.env      # then edit: domain, ACME email, auth
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# See ../docs/deploy.md for the full walkthrough (DNS, firewall, backups).
+
+name: beacon-search
+
+services:
+  beacon:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: abeaconsearch:latest
+    restart: unless-stopped
+    env_file: [beacon.env]
+    environment:
+      NODE_ENV: production
+      BEACON_HOST: 0.0.0.0
+      BEACON_PORT: '7700'
+      BEACON_DATA_DIR: /data
+      # Beacon sits behind Caddy on the same host; trust the proxy's headers.
+      BEACON_LOG_LEVEL: info
+    expose:
+      - '7700'
+    volumes:
+      - beacon-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:7700/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: [beacon.env]
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # certificates + ACME account — must persist
+      - caddy-config:/config
+    depends_on:
+      beacon:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+volumes:
+  beacon-data:
+  caddy-data:
+  caddy-config:

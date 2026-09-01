@@ -7,6 +7,8 @@ data/
 .env
 .env.*
 !.env.example
+deploy/beacon.env
+/var/backups/
 *.log
 .DS_Store
 .idea/

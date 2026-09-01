@@ -52,6 +52,23 @@ npm run dev
 
 ---
 
+## Production deployment (own server + domain)
+
+[`deploy/`](deploy) has a single-host setup: **Caddy** in front of Beacon with
+automatic, auto-renewing Let's Encrypt TLS, hardened containers, HTTP basic auth
+on the write endpoints, and a nightly backup script.
+
+```bash
+cd deploy
+cp beacon.env.example beacon.env      # set BEACON_DOMAIN, ACME email, auth hash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Full walkthrough — server prep, DNS, firewall, backups, updates, the no-Docker
+(systemd) path — in **[docs/deploy.md](docs/deploy.md)**.
+
+---
+
 ## Adding content
 
 **Crawl a website** (from the UI's _Crawl site_ tab, or):

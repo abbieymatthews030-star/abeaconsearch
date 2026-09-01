@@ -1,0 +1,54 @@
+# systemd unit for running Beacon Search directly on a host (no Docker).
+# Alternative to docker-compose.prod.yml — use one or the other.
+#
+#   sudo useradd --system --home /opt/abeaconsearch --shell /usr/sbin/nologin beacon
+#   sudo git clone https://github.com/abbieymatthews030-star/abeaconsearch /opt/abeaconsearch
+#   cd /opt/abeaconsearch && sudo -u beacon npm ci && sudo -u beacon npm run build
+#   sudo install -d -o beacon -g beacon /var/lib/beacon
+#   sudo cp deploy/beacon.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now beacon
+#
+# Put a TLS terminator (Caddy native, or nginx + certbot) in front on :443,
+# proxying to 127.0.0.1:7700. The Caddyfile in this directory works as-is
+# with a native `caddy run` too.
+
+[Unit]
+Description=Beacon Search
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=beacon
+Group=beacon
+WorkingDirectory=/opt/abeaconsearch
+ExecStart=/usr/bin/node dist/server/index.js
+Restart=on-failure
+RestartSec=3
+
+Environment=NODE_ENV=production
+Environment=BEACON_HOST=127.0.0.1
+Environment=BEACON_PORT=7700
+Environment=BEACON_DATA_DIR=/var/lib/beacon
+Environment=BEACON_LOG_LEVEL=info
+# Provider keys etc. — keep this file mode 0600, owned by root:
+EnvironmentFile=-/etc/beacon.env
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadWritePaths=/var/lib/beacon
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,54 @@
+# Caddy reverse proxy for Beacon Search.
+#
+# Values in {$BRACES} come from deploy/beacon.env. Automatic HTTPS: Caddy
+# obtains and renews a Let's Encrypt certificate for {$BEACON_DOMAIN} on its
+# own — just make sure ports 80 and 443 are open and DNS points here.
+#
+# For a local trial without a real domain, set BEACON_DOMAIN=localhost and
+# Caddy serves its own internal CA cert instead.
+{
+	email {$BEACON_ACME_EMAIL}
+	# Staging CA — uncomment while testing so you don't hit rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$BEACON_DOMAIN} {
+	encode zstd gzip
+
+	# --- Write protection ---------------------------------------------------
+	# Beacon has no built-in auth. Everything that mutates the index (add /
+	# delete document, bulk, crawl, clear) is gated behind HTTP basic auth so
+	# a public deployment can't be spammed. Reads (search, stats, plate
+	# lookups, the UI) stay open.
+	#
+	# Generate the hash:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
+	# Put the user in BEACON_AUTH_USER and the hash in BEACON_AUTH_HASH.
+	# To run a fully private instance, change the matcher to `@protected not path /api/health`.
+	@writes {
+		method POST PUT DELETE PATCH
+	}
+	basic_auth @writes {
+		{$BEACON_AUTH_USER} {$BEACON_AUTH_HASH}
+	}
+
+	# --- Security headers -------------------------------------------------
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy beacon:7700 {
+		health_uri /api/health
+		health_interval 30s
+		health_timeout 4s
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
