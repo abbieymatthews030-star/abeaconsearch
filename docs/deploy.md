@@ -1,18 +1,63 @@
 # Deploying Beacon Search on its own server + domain
 
-This guide sets up a **self-sustaining, single-host** deployment:
+Two supported paths:
+
+- **[Render / Railway](#managed-platform-render--railway)** — managed platform, connect the repo, done in minutes.
+- **[Your own VPS](#self-hosted-vps--caddy)** — one Linux box, Docker + Caddy, full control.
+
+Placeholder domain throughout: `search.example.com` — swap in your own.
+
+---
+
+## Managed platform (Render / Railway)
+
+The repo ships a Render blueprint at [`render.yaml`](../render.yaml). It builds the
+`Dockerfile`, mounts a **persistent disk at `/data`** (so the index survives
+deploys), sets a health check on `/api/health`, and **generates a
+`BEACON_WRITE_TOKEN`** so the public URL can't be spammed.
+
+1. Push this repo to GitHub (a fork is fine).
+2. **Render dashboard → New → Blueprint**, select the repo. Render reads `render.yaml`.
+   Pick the `starter` plan (the free tier has no persistent disk).
+3. First build + deploy runs automatically; every later push to the default branch redeploys.
+4. **Custom domain:** service → **Settings → Custom Domains** → add
+   `search.example.com`. Render shows a `CNAME` target — create that record at your
+   DNS host. Certificate issuance is automatic once DNS resolves.
+5. **Get your write token:** service → **Environment** → reveal `BEACON_WRITE_TOKEN`.
+   Paste it into the web UI's _Operator token_ field (Add / Crawl tabs), or send it
+   as `Authorization: Bearer <token>` from scripts.
+
+```bash
+curl https://search.example.com/api/health
+curl -X POST https://search.example.com/api/documents \
+  -H "authorization: Bearer $BEACON_WRITE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"title":"Hello","body":"first document","tags":["demo"]}'
+curl 'https://search.example.com/api/search?q=hello'
+```
+
+**Railway:** no blueprint file needed — create a project from the repo, it detects
+the `Dockerfile`. Then add a **Volume** mounted at `/data`, and set the env vars
+from `render.yaml` by hand (`BEACON_WRITE_TOKEN` to a long random string,
+`PORT=7700`). Add your domain under the service's **Settings → Networking**.
+
+Backups on a managed platform: `GET /api/documents` dumps every document as JSON —
+cron that to off-box storage, or snapshot the disk from the provider's dashboard.
+
+---
+
+## Self-hosted VPS + Caddy
+
+This path sets up a **self-sustaining, single-host** deployment:
 
 - Beacon runs in a container, restarts on failure and on reboot.
 - **Caddy** terminates TLS and **auto-renews** Let's Encrypt certificates — no cron, no manual steps.
 - The index is a single JSON snapshot on a Docker volume, backed up by a one-line cron job.
-- Write endpoints are behind HTTP basic auth so a public instance can't be spammed.
+- Write endpoints are behind HTTP basic auth (Caddy) — and you can also set `BEACON_WRITE_TOKEN`.
 
-Everything lives in [`deploy/`](../deploy). Placeholder domain throughout:
-`search.example.com` — swap in your own.
+Everything lives in [`deploy/`](../deploy).
 
----
-
-## 1. Provision a server
+### 1. Provision a server
 
 Anything with 1 vCPU / 1 GB RAM is plenty (Hetzner CX22, DigitalOcean, Vultr, an
 old Pi, …). Use a current Ubuntu LTS or Debian.
@@ -36,7 +81,7 @@ Log back in as `deploy` for the rest.
 
 ---
 
-## 2. Point DNS at it
+### 2. Point DNS at it
 
 At your registrar / DNS host, create records for the hostname you'll use:
 
@@ -50,7 +95,7 @@ Caddy needs it reachable to complete the ACME challenge.
 
 ---
 
-## 3. Configure
+### 3. Configure
 
 ```bash
 sudo git clone https://github.com/abbieymatthews030-star/abeaconsearch /opt/abeaconsearch
@@ -75,7 +120,7 @@ BEACON_AUTH_HASH=$2a$14$…the hash you just generated…
 
 ---
 
-## 4. Launch
+### 4. Launch
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
@@ -97,7 +142,7 @@ curl 'https://search.example.com/api/search?q=hello'
 
 ---
 
-## 5. Backups
+### 5. Backups
 
 ```bash
 sudo crontab -e
@@ -111,7 +156,7 @@ object storage) for real durability. Restore instructions are in the header of
 
 ---
 
-## 6. Updates
+### 6. Updates
 
 ```bash
 cd /opt/abeaconsearch && git pull

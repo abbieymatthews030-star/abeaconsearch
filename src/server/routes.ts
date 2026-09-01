@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { Config } from '../core/config.js';
@@ -78,9 +79,39 @@ export function registerErrorHandler(app: FastifyInstance): void {
   });
 }
 
+/** Read a bearer / `X-Beacon-Token` credential off a request. */
+function presentedToken(headers: Record<string, unknown>): string {
+  const auth = headers.authorization;
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  const header = headers['x-beacon-token'];
+  return typeof header === 'string' ? header.trim() : '';
+}
+
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
   return async (app) => {
     const { engine, config, plateChecker } = ctx;
+
+    // Optional write auth: when BEACON_WRITE_TOKEN is set, mutating requests
+    // must present it. Reads (and /health) stay open.
+    if (config.writeToken) {
+      const expected = Buffer.from(config.writeToken);
+      app.addHook('onRequest', async (request, reply) => {
+        if (READ_METHODS.has(request.method.toUpperCase())) return;
+        const candidate = Buffer.from(presentedToken(request.headers));
+        const ok = candidate.length === expected.length && timingSafeEqual(candidate, expected);
+        if (!ok) {
+          reply
+            .status(401)
+            .header('www-authenticate', 'Bearer realm="beacon", error="invalid_token"')
+            .send({
+              error: 'unauthorized',
+              message: 'A valid write token is required for this operation.',
+            });
+        }
+      });
+    }
 
     app.get('/health', async () => healthPayload(ctx));
 

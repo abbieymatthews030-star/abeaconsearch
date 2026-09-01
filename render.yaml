@@ -1,0 +1,50 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# One-time setup:
+#   1. Push this repo to GitHub.
+#   2. Render dashboard → New → Blueprint → pick the repo. It reads this file.
+#   3. Render builds the Dockerfile and deploys on every push to the default branch.
+#   4. Add your domain:  service → Settings → Custom Domains → add search.example.com,
+#      then create the CNAME it shows you at your DNS host. TLS is automatic.
+#
+# The persistent disk keeps data/index.json across deploys and restarts.
+# A write token is generated so the public URL can't be spammed — read it from
+# the service's Environment tab and paste it into the web UI's "Operator token"
+# field (Add / Crawl tabs), or send it as `Authorization: Bearer <token>`.
+
+services:
+  - type: web
+    name: beacon-search
+    runtime: docker
+    plan: starter # "free" has no persistent disk
+    region: frankfurt # match this to where your users are
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: beacon-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 7700 # match the Dockerfile's BEACON_PORT so Render routes correctly
+      - key: NODE_ENV
+        value: production
+      - key: BEACON_LOG_LEVEL
+        value: info
+      - key: BEACON_CRAWL_MAX_PAGES
+        value: 100
+      - key: BEACON_WRITE_TOKEN
+        generateValue: true # Render generates a strong secret; see the Environment tab
+      # Optional number-plate provider keys — set as needed (sync:false = enter by hand):
+      - key: DVLA_VES_API_KEY
+        sync: false
+      - key: MOT_CLIENT_ID
+        sync: false
+      - key: MOT_CLIENT_SECRET
+        sync: false
+      - key: MOT_API_KEY
+        sync: false
+      - key: MOT_TOKEN_URL
+        sync: false

@@ -284,6 +284,11 @@ body {
   color: var(--muted);
 }
 
+.form__hint {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 .form input,
 .form textarea {
   font: inherit;

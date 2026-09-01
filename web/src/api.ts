@@ -8,10 +8,34 @@ export type { BeaconDocument, IndexStats, PlateCheck, SearchHit, SearchResponse 
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 
+const TOKEN_KEY = 'beacon.writeToken';
+
+/** Operator token for write-protected instances (BEACON_WRITE_TOKEN). */
+export const writeToken = {
+  get: (): string => {
+    try {
+      return localStorage.getItem(TOKEN_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  },
+  set: (value: string): void => {
+    try {
+      if (value) localStorage.setItem(TOKEN_KEY, value);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* storage unavailable — token just won't persist */
+    }
+  },
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const token = writeToken.get();
+  const auth = method !== 'GET' && token ? { 'x-beacon-token': token } : undefined;
   const response = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers: { 'content-type': 'application/json', ...auth, ...(init?.headers ?? {}) },
   });
   const text = await response.text();
   const payload = text ? (JSON.parse(text) as unknown) : null;

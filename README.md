@@ -54,9 +54,13 @@ npm run dev
 
 ## Production deployment (own server + domain)
 
-[`deploy/`](deploy) has a single-host setup: **Caddy** in front of Beacon with
-automatic, auto-renewing Let's Encrypt TLS, hardened containers, HTTP basic auth
-on the write endpoints, and a nightly backup script.
+**Render / Railway (managed):** [`render.yaml`](render.yaml) is a ready blueprint —
+connect the repo, it builds the Dockerfile, mounts a persistent disk at `/data`,
+generates a `BEACON_WRITE_TOKEN`, and gives you a URL to attach a custom domain to.
+
+**Your own VPS:** [`deploy/`](deploy) has a single-host Docker setup — **Caddy**
+in front of Beacon with automatic, auto-renewing Let's Encrypt TLS, hardened
+containers, basic-auth on the write endpoints, and a nightly backup script.
 
 ```bash
 cd deploy
@@ -64,8 +68,8 @@ cp beacon.env.example beacon.env      # set BEACON_DOMAIN, ACME email, auth hash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Full walkthrough — server prep, DNS, firewall, backups, updates, the no-Docker
-(systemd) path — in **[docs/deploy.md](docs/deploy.md)**.
+Full walkthrough — platform setup, server prep, DNS, firewall, backups, updates,
+the no-Docker (systemd) path — in **[docs/deploy.md](docs/deploy.md)**.
 
 ---
 
@@ -191,16 +195,34 @@ Tools: `check_number_plate`, `validate_plate_format`, `decode_plate`,
 All configuration is via environment variables (or a `.env` file — auto-loaded).
 See [`.env.example`](.env.example) for the full list. Common ones:
 
-| Variable                 | Default             | Description                      |
-| ------------------------ | ------------------- | -------------------------------- |
-| `BEACON_PORT`            | `7700`              | HTTP port (`PORT` also honoured) |
-| `BEACON_HOST`            | `0.0.0.0`           | Bind address                     |
-| `BEACON_DATA_DIR`        | `data`              | Where the index file is stored   |
-| `BEACON_INDEX_FILE`      | `<data>/index.json` | Explicit index path              |
-| `BEACON_WEB_DIR`         | `web/dist`          | Built web UI directory           |
-| `BEACON_CORS_ORIGIN`     | _(all)_             | Comma-separated allowed origins  |
-| `BEACON_LOG_LEVEL`       | `info`              | `trace`…`error`, or `silent`     |
-| `BEACON_CRAWL_MAX_PAGES` | `50`                | Default crawl page budget        |
+| Variable                 | Default             | Description                            |
+| ------------------------ | ------------------- | -------------------------------------- |
+| `BEACON_PORT`            | `7700`              | HTTP port (`PORT` also honoured)       |
+| `BEACON_HOST`            | `0.0.0.0`           | Bind address                           |
+| `BEACON_DATA_DIR`        | `data`              | Where the index file is stored         |
+| `BEACON_INDEX_FILE`      | `<data>/index.json` | Explicit index path                    |
+| `BEACON_WEB_DIR`         | `web/dist`          | Built web UI directory                 |
+| `BEACON_CORS_ORIGIN`     | _(all)_             | Comma-separated allowed origins        |
+| `BEACON_LOG_LEVEL`       | `info`              | `trace`…`error`, or `silent`           |
+| `BEACON_CRAWL_MAX_PAGES` | `50`                | Default crawl page budget              |
+| `BEACON_WRITE_TOKEN`     | _(none)_            | Require a token for writes (see below) |
+
+### Write auth
+
+By default the API accepts anonymous writes — fine on a private network, risky on
+a public URL. Set **`BEACON_WRITE_TOKEN`** and every mutating request
+(`POST`/`PUT`/`PATCH`/`DELETE`) must then carry it:
+
+```bash
+curl -X POST https://search.example.com/api/documents \
+  -H 'authorization: Bearer YOUR_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{"title":"Hello","body":"world"}'
+```
+
+Reads (search, stats, plate lookups, the UI) stay open. The web UI has an
+_Operator token_ field on the **Add** and **Crawl** tabs that stores the token in
+the browser and sends it automatically.
 
 ---
 

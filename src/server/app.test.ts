@@ -179,3 +179,66 @@ describe('HTTP API', () => {
     expect(res.json().summary.status).toBe('invalid');
   });
 });
+
+describe('write auth (BEACON_WRITE_TOKEN)', () => {
+  let app: FastifyInstance;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'beacon-auth-'));
+    const config = loadConfig({
+      indexFile: path.join(dir, 'index.json'),
+      webDir: path.join(dir, 'nonexistent-web'),
+      logLevel: 'silent',
+      persistDebounceMs: 0,
+      writeToken: 's3cret-token',
+    });
+    const engine = new PersistentEngine({ indexFile: config.indexFile, debounceMs: 0 });
+    await engine.load();
+    app = await buildApp({ config, engine });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const doc = { title: 'Guarded', body: 'needs a token', tags: [] };
+
+  it('leaves reads open', async () => {
+    const health = await app.inject({ method: 'GET', url: '/api/health' });
+    const search = await app.inject({ method: 'GET', url: '/api/search?q=anything' });
+    expect(health.statusCode).toBe(200);
+    expect(search.statusCode).toBe(200);
+  });
+
+  it('rejects a write with no / wrong token as 401', async () => {
+    const none = await app.inject({ method: 'POST', url: '/api/documents', payload: doc });
+    const wrong = await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      payload: doc,
+      headers: { authorization: 'Bearer nope' },
+    });
+    expect(none.statusCode).toBe(401);
+    expect(none.json().error).toBe('unauthorized');
+    expect(wrong.statusCode).toBe(401);
+  });
+
+  it('accepts a write with the token via bearer or X-Beacon-Token', async () => {
+    const bearer = await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      payload: doc,
+      headers: { authorization: 'Bearer s3cret-token' },
+    });
+    const header = await app.inject({
+      method: 'DELETE',
+      url: `/api/documents/${bearer.json().id}`,
+      headers: { 'x-beacon-token': 's3cret-token' },
+    });
+    expect(bearer.statusCode).toBe(201);
+    expect(header.statusCode).toBe(204);
+  });
+});

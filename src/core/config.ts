@@ -17,6 +17,12 @@ export interface Config {
   crawlDelayMs: number;
   crawlAllowPrivateHosts: boolean;
   maxBodyBytes: number;
+  /**
+   * When non-empty, every mutating API request (POST/PUT/PATCH/DELETE) must
+   * present this token via `Authorization: Bearer <token>` or the
+   * `X-Beacon-Token` header. Reads stay open. Empty = no write auth.
+   */
+  writeToken: string;
   plate: PlateConfig;
 }
 
@@ -99,6 +105,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     crawlDelayMs: readInt('BEACON_CRAWL_DELAY_MS', 150),
     crawlAllowPrivateHosts: readBool('BEACON_CRAWL_ALLOW_PRIVATE', false),
     maxBodyBytes: readInt('BEACON_MAX_BODY_BYTES', 8 * 1024 * 1024),
+    writeToken: readString('BEACON_WRITE_TOKEN', ''),
     plate: {
       dvlaVesApiKey: readOptional('DVLA_VES_API_KEY'),
       dvlaVesBaseUrl: readOptional('DVLA_VES_BASE_URL'),

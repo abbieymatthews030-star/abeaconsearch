@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type IndexStats, type PlateCheck, type SearchResponse } from './api';
+import { api, writeToken, type IndexStats, type PlateCheck, type SearchResponse } from './api';
 
 type Tab = 'search' | 'plate' | 'add' | 'crawl' | 'about';
 
@@ -248,6 +248,29 @@ function SearchView(): JSX.Element {
   );
 }
 
+/**
+ * Optional operator token, needed only when the instance runs with
+ * BEACON_WRITE_TOKEN set. Persisted to localStorage via the api module.
+ */
+function TokenField(): JSX.Element {
+  const [value, setValue] = useState(writeToken.get());
+  return (
+    <label>
+      Operator token <span className="form__hint">— only if this instance is write-protected</span>
+      <input
+        type="password"
+        autoComplete="off"
+        value={value}
+        placeholder="BEACON_WRITE_TOKEN"
+        onChange={(e) => {
+          setValue(e.target.value);
+          writeToken.set(e.target.value.trim());
+        }}
+      />
+    </label>
+  );
+}
+
 function AddView({ onDone }: { onDone: () => void }): JSX.Element {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -307,6 +330,7 @@ function AddView({ onDone }: { onDone: () => void }): JSX.Element {
         Body
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} />
       </label>
+      <TokenField />
       <button type="submit" className="btn" disabled={busy || title.trim() === ''}>
         {busy ? 'Indexing…' : 'Add to index'}
       </button>
@@ -383,6 +407,7 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
         Tags (comma-separated)
         <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="website" />
       </label>
+      <TokenField />
       <button type="submit" className="btn" disabled={busy || url.trim() === ''}>
         {busy ? 'Crawling…' : 'Start crawl'}
       </button>
