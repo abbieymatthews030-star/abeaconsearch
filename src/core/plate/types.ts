@@ -1,4 +1,21 @@
-/** UK vehicle registration mark (VRM / "number plate") analysis types. */
+/** Vehicle registration mark ("number plate") analysis types — UK and Australia. */
+
+/** Countries with a supported plate classifier. `unknown` = neither matched. */
+export type PlateCountry = 'GB' | 'AU' | 'unknown';
+
+/**
+ * Structural shape of a current-issue Australian plate. Unlike the UK's DVLA
+ * memory-tag system, Australia has no single national scheme that encodes the
+ * issuing state in the characters — each state/territory road authority runs
+ * its own series, and only the plate's physical border/slogan (not part of
+ * the alphanumeric code) names the state. A shape match is a plausibility
+ * check, not proof of which state issued it.
+ */
+export type AuPlateShape =
+  | 'nsw-style' // AA00AA — New South Wales' general-issue format
+  | 'qld-style' // 000AAA — Queensland's general-issue format
+  | 'general-au' // AAA000 — common general-issue shape (VIC/SA/TAS/NT/WA/ACT)
+  | 'unknown';
 
 export type PlateFormat =
   | 'current' // 2001–present: AA00 AAA
@@ -7,7 +24,7 @@ export type PlateFormat =
   | 'dateless' // pre-1963 and cherished marks
   | 'northern-ireland' // AAA 0000 (contains I or Z)
   | 'diplomatic' // 000 A 000
-  | 'unknown';
+  | AuPlateShape;
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'info' | 'skipped';
 
@@ -88,9 +105,16 @@ export interface MotSummary {
 }
 
 export interface PlateCheckOptions {
-  /** Query the DVLA Vehicle Enquiry Service (needs an API key). */
+  /**
+   * Force interpretation as this country instead of auto-detecting from the
+   * plate's shape. `GB` keeps the original UK-only behaviour (DVLA/DVSA
+   * lookups included); `AU` runs the Australian structural checks and skips
+   * the UK-only lookups. Omit to auto-detect.
+   */
+  country?: 'GB' | 'AU';
+  /** Query the DVLA Vehicle Enquiry Service (needs an API key; GB only). */
   includeVehicleData?: boolean;
-  /** Query the DVSA MOT history API (needs client credentials). */
+  /** Query the DVSA MOT history API (needs client credentials; GB only). */
   includeMotHistory?: boolean;
   /** Evaluate the plate as if registered/checked on this date (ISO). */
   referenceDate?: string;
@@ -101,6 +125,8 @@ export interface PlateCheck {
   normalized: string;
   formatted: string;
   valid: boolean;
+  /** Which country's rules the plate was checked against. */
+  country: PlateCountry;
   format: PlateFormat;
   age: PlateAge | null;
   region: PlateRegion | null;
@@ -109,7 +135,7 @@ export interface PlateCheck {
   checks: CheckItem[];
   summary: {
     /**
-     * `invalid` — not a valid UK registration mark.
+     * `invalid` — not a valid registration mark for the detected/selected country.
      * `fail` — valid mark, but a check failed (e.g. untaxed, MOT expired).
      * `attention` — valid mark with warnings only.
      * `ok` — valid mark, everything passed.

@@ -10,16 +10,16 @@ concurrent-writer races).
 
 ## Tools
 
-| Tool                    | What it does                                                         | Needs                                                                   |
-| ----------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `check_number_plate`    | Full automatic report: format, age, region + optional DVLA/DVSA data | — (more with API keys)                                                  |
-| `validate_plate_format` | Structural validity of a registration mark                           | —                                                                       |
-| `decode_plate`          | Age period + DVLA region/office, offline                             | —                                                                       |
-| `dvla_vehicle_enquiry`  | Make/colour/year/tax/MOT status                                      | `DVLA_VES_API_KEY`                                                      |
-| `mot_history`           | Full MOT test history, mileage, defects                              | `MOT_CLIENT_ID` / `MOT_CLIENT_SECRET` / `MOT_API_KEY` / `MOT_TOKEN_URL` |
-| `beacon_search`         | Full-text search the index                                           | a running `beacon serve`                                                |
-| `beacon_index_document` | Add/replace a document                                               | a running `beacon serve`                                                |
-| `beacon_stats`          | Index statistics                                                     | a running `beacon serve`                                                |
+| Tool                    | What it does                                                                                                                                                                                                                       | Needs                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `check_number_plate`    | Full automatic report for a UK **or Australian** plate (country auto-detected, or pass `country: "GB" \| "AU"`): format, and for UK also age/region + optional DVLA/DVSA data; for AU, shape validation + candidate issuing states | — (more with API keys, UK only)                                         |
+| `validate_plate_format` | Structural validity of a UK or Australian registration mark                                                                                                                                                                        | —                                                                       |
+| `decode_plate`          | UK: age period + DVLA region/office, offline. AU: shape + candidate states (no age/region scheme exists for AU)                                                                                                                    | —                                                                       |
+| `dvla_vehicle_enquiry`  | Make/colour/year/tax/MOT status (UK only)                                                                                                                                                                                          | `DVLA_VES_API_KEY`                                                      |
+| `mot_history`           | Full MOT test history, mileage, defects (UK only)                                                                                                                                                                                  | `MOT_CLIENT_ID` / `MOT_CLIENT_SECRET` / `MOT_API_KEY` / `MOT_TOKEN_URL` |
+| `beacon_search`         | Full-text search the index                                                                                                                                                                                                         | a running `beacon serve`                                                |
+| `beacon_index_document` | Add/replace a document                                                                                                                                                                                                             | a running `beacon serve`                                                |
+| `beacon_stats`          | Index statistics                                                                                                                                                                                                                   | a running `beacon serve`                                                |
 
 ## Run it
 

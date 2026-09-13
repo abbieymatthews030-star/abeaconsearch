@@ -8,6 +8,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Australian number plate support** (`src/core/plate/au-format.ts`,
+  `src/core/plate/country.ts`): the plate checker, REST API, CLI and MCP
+  tools now accept an optional `country: "GB" | "AU"` and auto-detect it
+  from the plate's shape when omitted. Australian plates get structural
+  format validation against the common current state shapes (NSW `AA00AA`,
+  QLD `00AAA`, and the `AAA000` shape shared by VIC/SA/TAS/NT/WA/ACT) plus a
+  list of states that commonly issue that shape — Australia has no national
+  scheme encoding the issuing state in the characters the way the UK's DVLA
+  memory tags do, so this is reported as a hint, not a determination. UK-only
+  checks (age identifier, DVLA/DVSA lookups) are skipped for AU plates with
+  an explanatory note pointing at each state's free rego-check page and
+  PPSR for finance/write-off status. `PlateCheck` gained a `country` field;
+  `beacon plate` gained `--country`; the web UI's Plate check tab gained a
+  country selector.
+
 - **Answer weave** (`src/core/answer/`): `GET /api/answer?q=` and the Search tab
   return a short written answer for question-like queries, assembled only from
   retrieved sources. Retrieval combines the local index with optional live web

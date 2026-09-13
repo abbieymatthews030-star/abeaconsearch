@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Config } from '../core/config.js';
 import { decodeAge } from '../core/plate/age.js';
+import { classifyAuPlate, formatAuPlate } from '../core/plate/au-format.js';
+import { detectCountry } from '../core/plate/country.js';
 import { classifyPlate, formatPlate, normalizePlate } from '../core/plate/format.js';
 import { createPlateChecker } from '../core/plate/index.js';
 import { lookupMemoryTag } from '../core/plate/regions.js';
@@ -61,26 +63,35 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     .string()
     .min(1)
     .max(16)
-    .describe('A UK vehicle registration mark, e.g. "AB12 CDE"');
+    .describe('A UK or Australian vehicle registration mark, e.g. "AB12 CDE" or "AB12 CD"');
+
+  const countryArg = z
+    .enum(['GB', 'AU'])
+    .optional()
+    .describe('Force interpretation as UK ("GB") or Australian ("AU") instead of auto-detecting');
 
   server.registerTool(
     'check_number_plate',
     {
-      title: 'Check a UK number plate',
+      title: 'Check a UK or Australian number plate',
       description:
-        'Run all automatic checks on a registration mark: format validation, age identifier, ' +
-        'region of registration, and (when API credentials are configured) DVLA tax/MOT status ' +
-        'and DVSA MOT history. Returns a structured report with per-check pass/warn/fail status.',
+        'Run all automatic checks on a registration mark: format validation and, for UK plates, ' +
+        'age identifier, region of registration, and (when API credentials are configured) DVLA ' +
+        'tax/MOT status and DVSA MOT history. Australian plates get structural format validation ' +
+        'and a list of states that commonly issue that shape (Australia has no national scheme ' +
+        'encoding the state, unlike UK memory tags). Country is auto-detected unless given. ' +
+        'Returns a structured report with per-check pass/warn/fail status.',
       inputSchema: {
         plate: plateArg,
+        country: countryArg,
         includeVehicleData: z
           .boolean()
           .optional()
-          .describe('Query the DVLA Vehicle Enquiry Service (default true)'),
+          .describe('Query the DVLA Vehicle Enquiry Service (default true; GB only)'),
         includeMotHistory: z
           .boolean()
           .optional()
-          .describe('Query the DVSA MOT History API (default true)'),
+          .describe('Query the DVSA MOT History API (default true; GB only)'),
         referenceDate: z
           .string()
           .datetime()
@@ -91,6 +102,7 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     async (args) => {
       try {
         const check = await checker.check(args.plate, {
+          country: args.country,
           includeVehicleData: args.includeVehicleData,
           includeMotHistory: args.includeMotHistory,
           referenceDate: args.referenceDate,
@@ -107,15 +119,31 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     {
       title: 'Validate plate format',
       description:
-        'Offline check of whether a string is a structurally valid UK registration mark.',
-      inputSchema: { plate: plateArg },
+        'Offline check of whether a string is a structurally valid UK or Australian registration ' +
+        'mark. Country is auto-detected unless given.',
+      inputSchema: { plate: plateArg, country: countryArg },
     },
     async (args) => {
       const normalized = normalizePlate(args.plate);
+      const country = detectCountry(normalized, args.country);
+      if (country === 'AU') {
+        const classification = classifyAuPlate(normalized);
+        return ok({
+          input: args.plate,
+          normalized,
+          country,
+          formatted: formatAuPlate(normalized, classification.shape),
+          format: classification.shape,
+          valid: classification.valid,
+          likelyStates: classification.likelyStates,
+          reason: classification.reason,
+        });
+      }
       const classification = classifyPlate(normalized);
       return ok({
         input: args.plate,
         normalized,
+        country: country === 'unknown' ? 'unknown' : 'GB',
         formatted: formatPlate(normalized, classification.format),
         ...classification,
       });
@@ -127,16 +155,37 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     {
       title: 'Decode plate age and region',
       description:
-        'Offline decode of a plate: the registration date range from the age identifier and the ' +
-        'DVLA office / region from the memory tag. No external calls.',
-      inputSchema: { plate: plateArg },
+        'Offline decode of a UK plate: the registration date range from the age identifier and ' +
+        'the DVLA office / region from the memory tag. Australian plates have no equivalent ' +
+        'national age/region scheme, so only the format and likely issuing states are returned. ' +
+        'Country is auto-detected unless given. No external calls.',
+      inputSchema: { plate: plateArg, country: countryArg },
     },
     async (args) => {
       const normalized = normalizePlate(args.plate);
+      const country = detectCountry(normalized, args.country);
+      if (country === 'AU') {
+        const classification = classifyAuPlate(normalized);
+        return ok({
+          normalized,
+          country,
+          format: classification.shape,
+          valid: classification.valid,
+          age: null,
+          likelyStates: classification.likelyStates,
+        });
+      }
       const { format, valid } = classifyPlate(normalized);
       const age = decodeAge(normalized, format, new Date());
       const region = format === 'current' ? lookupMemoryTag(normalized.slice(0, 2)) : null;
-      return ok({ normalized, format, valid, age, region });
+      return ok({
+        normalized,
+        country: country === 'unknown' ? 'unknown' : 'GB',
+        format,
+        valid,
+        age,
+        region,
+      });
     },
   );
 

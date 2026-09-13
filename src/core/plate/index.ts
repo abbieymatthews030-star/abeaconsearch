@@ -8,6 +8,8 @@ import type { PlateCheck } from './types.js';
 
 export * from './types.js';
 export { normalizePlate, classifyPlate, formatPlate } from './format.js';
+export { classifyAuPlate, formatAuPlate, AU_STATE_AUTHORITIES } from './au-format.js';
+export { detectCountry } from './country.js';
 export { decodeAge } from './age.js';
 export { lookupMemoryTag } from './regions.js';
 export { PlateChecker } from './checker.js';
@@ -44,6 +46,7 @@ export function createPlateChecker(
 export function plateCheckToDocument(check: PlateCheck): DocumentInput {
   const lines = [
     `Registration: ${check.formatted}`,
+    `Country: ${check.country}`,
     `Format: ${check.format}`,
     `Result: ${check.summary.headline}`,
     check.age ? `Age: ${check.age.description}` : null,
@@ -55,8 +58,13 @@ export function plateCheckToDocument(check: PlateCheck): DocumentInput {
     ...check.checks.map((c) => `[${c.status.toUpperCase()}] ${c.label}: ${c.detail}`),
   ].filter((l): l is string => l !== null);
 
-  const tags = ['plate-check', `plate:${check.format}`, `result:${check.summary.status}`];
-  if (check.region?.country) tags.push(`country:${slugify(check.region.country)}`);
+  const tags = [
+    'plate-check',
+    `plate:${check.format}`,
+    `result:${check.summary.status}`,
+    `country:${slugify(check.country)}`,
+  ];
+  if (check.region?.country) tags.push(`region-country:${slugify(check.region.country)}`);
   if (check.vehicle?.make) tags.push(`make:${slugify(check.vehicle.make)}`);
 
   return {

@@ -78,6 +78,57 @@ describe('PlateChecker (offline)', () => {
   });
 });
 
+describe('PlateChecker (Australia)', () => {
+  const checker = new PlateChecker({ now: NOW });
+
+  it('auto-detects and validates an AU-shaped plate', async () => {
+    const report = await checker.check('ABC123');
+    expect(report.country).toBe('AU');
+    expect(report.valid).toBe(true);
+    expect(report.format).toBe('general-au');
+    expect(report.summary.status).toBe('ok');
+    expect(report.age).toBeNull();
+    expect(report.region).toBeNull();
+    expect(report.checks.find((c) => c.id === 'age')?.status).toBe('info');
+    expect(report.checks.find((c) => c.id === 'region')?.data?.likelyStates).toContain('Victoria');
+  });
+
+  it('skips DVLA/DVSA lookups for an AU plate even when requested', async () => {
+    const checker2 = new PlateChecker({
+      now: NOW,
+      vehicleProvider: {
+        name: 'stub VES',
+        configured: true,
+        lookup: async () => ({ ok: false, reason: 'not_found' }),
+      },
+    });
+    const report = await checker2.check('ABC123', { includeVehicleData: true });
+    expect(report.vehicle).toBeNull();
+    expect(report.checks.find((c) => c.id === 'dvla-record')?.status).toBe('skipped');
+  });
+
+  it('forces AU interpretation via options.country even for a UK-shaped plate', async () => {
+    const report = await checker.check('AB12CDE', { country: 'AU' });
+    expect(report.country).toBe('AU');
+    expect(report.valid).toBe(false);
+  });
+
+  it('forces GB interpretation via options.country even for an AU-shaped plate', async () => {
+    // AB12CD is a valid NSW-style shape but matches no GB era (current is 7
+    // chars; the loose dateless bucket needs a single trailing letter, not two).
+    const report = await checker.check('AB12CD', { country: 'GB' });
+    expect(report.country).toBe('GB');
+    expect(report.valid).toBe(false);
+  });
+
+  it('reports an unrecognised plate as unknown country, not GB', async () => {
+    const report = await checker.check('NOTAPLATE123456');
+    expect(report.country).toBe('unknown');
+    expect(report.valid).toBe(false);
+    expect(report.summary.status).toBe('invalid');
+  });
+});
+
 describe('PlateChecker (with providers)', () => {
   it('adds tax, MOT and year-consistency checks from DVLA data', async () => {
     const checker = new PlateChecker({

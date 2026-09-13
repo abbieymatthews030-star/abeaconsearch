@@ -108,6 +108,7 @@ export const api = {
   },
   checkPlate(params: {
     plate: string;
+    country?: 'GB' | 'AU';
     vehicle?: boolean;
     mot?: boolean;
     index?: boolean;

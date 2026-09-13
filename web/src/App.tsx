@@ -692,6 +692,7 @@ const STATUS_ICON: Record<string, string> = {
 
 function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
   const [input, setInput] = useState('');
+  const [country, setCountry] = useState<'' | 'GB' | 'AU'>('');
   const [vehicle, setVehicle] = useState(true);
   const [mot, setMot] = useState(true);
   const [index, setIndex] = useState(false);
@@ -704,7 +705,13 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
     setBusy(true);
     setError(null);
     api
-      .checkPlate({ plate: input.trim(), vehicle, mot, index })
+      .checkPlate({
+        plate: input.trim(),
+        country: country || undefined,
+        vehicle: country === 'AU' ? false : vehicle,
+        mot: country === 'AU' ? false : mot,
+        index,
+      })
       .then((res) => {
         setReport(res);
         if (index) onDone();
@@ -727,23 +734,43 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
           className="plate__input"
           value={input}
           onChange={(e) => setInput(e.target.value.toUpperCase())}
-          placeholder="AB12 CDE"
+          placeholder="AB12 CDE or ABC 123"
           aria-label="Registration mark"
           maxLength={16}
           autoFocus
         />
+        <select
+          className="plate__country"
+          value={country}
+          onChange={(e) => setCountry(e.target.value as '' | 'GB' | 'AU')}
+          aria-label="Country"
+        >
+          <option value="">Auto-detect</option>
+          <option value="GB">UK</option>
+          <option value="AU">Australia</option>
+        </select>
         <button type="submit" className="btn" disabled={busy || input.trim() === ''}>
           {busy ? 'Checking…' : 'Run checks'}
         </button>
       </form>
       <div className="plate__opts">
         <label>
-          <input type="checkbox" checked={vehicle} onChange={(e) => setVehicle(e.target.checked)} />{' '}
-          DVLA vehicle data
+          <input
+            type="checkbox"
+            checked={vehicle}
+            disabled={country === 'AU'}
+            onChange={(e) => setVehicle(e.target.checked)}
+          />{' '}
+          DVLA vehicle data (UK only)
         </label>
         <label>
-          <input type="checkbox" checked={mot} onChange={(e) => setMot(e.target.checked)} /> MOT
-          history
+          <input
+            type="checkbox"
+            checked={mot}
+            disabled={country === 'AU'}
+            onChange={(e) => setMot(e.target.checked)}
+          />{' '}
+          MOT history (UK only)
         </label>
         <label>
           <input type="checkbox" checked={index} onChange={(e) => setIndex(e.target.checked)} />{' '}
@@ -764,6 +791,12 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
           </div>
 
           <dl className="plate__facts">
+            <div>
+              <dt>Country</dt>
+              <dd>
+                {report.country === 'GB' ? 'UK' : report.country === 'AU' ? 'Australia' : 'Unknown'}
+              </dd>
+            </div>
             <div>
               <dt>Format</dt>
               <dd>{report.format}</dd>
@@ -886,15 +919,21 @@ function AboutView(): JSX.Element {
       </p>
       <h3>Number plate checker</h3>
       <p>
-        The <em>Plate check</em> tab runs automatic checks on a UK registration: format validation,
-        age identifier, DVLA region, and — when API keys are configured — DVLA tax/MOT status and
-        DVSA MOT history. Offline checks need no credentials.
+        The <em>Plate check</em> tab runs automatic checks on a UK <em>or Australian</em>{' '}
+        registration — country is auto-detected, or pick one explicitly. UK plates get format
+        validation, age identifier, DVLA region, and — when API keys are configured — DVLA tax/MOT
+        status and DVSA MOT history. Australian plates get structural format validation against the
+        common current state shapes; Australia has no national scheme encoding the issuing state in
+        the plate itself (unlike the UK's DVLA memory tags), so the state is reported as a hint, not
+        a determination. Offline checks need no credentials either way.
       </p>
       <h3>CLI &amp; MCP</h3>
       <p>
         <code>beacon serve|add|import|crawl|search|stats</code>,{' '}
-        <code>beacon plate &quot;AB12 CDE&quot;</code>. An MCP server (<code>beacon-mcp</code>)
-        exposes the plate checker and the search index as tools for Claude and other MCP clients.
+        <code>beacon plate &quot;AB12 CDE&quot;</code> (or{' '}
+        <code>beacon plate &quot;ABC 123&quot; --country AU</code>). An MCP server (
+        <code>beacon-mcp</code>) exposes the plate checker and the search index as tools for Claude
+        and other MCP clients.
       </p>
     </section>
   );

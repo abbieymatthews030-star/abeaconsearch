@@ -17,6 +17,7 @@ import {
 } from '../core/types.js';
 
 const plateCheckQuerySchema = z.object({
+  country: z.enum(['GB', 'AU']).optional(),
   vehicle: booleanParam(true),
   mot: booleanParam(true),
   index: optionalBooleanParam,
@@ -169,6 +170,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     // --- Number plate checker -------------------------------------------------
     const runPlateCheck = async (plate: string, query: z.infer<typeof plateCheckQuerySchema>) => {
       const check = await plateChecker.check(plate, {
+        country: query.country,
         includeVehicleData: query.vehicle,
         includeMotHistory: query.mot,
         referenceDate: query.referenceDate,
