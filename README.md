@@ -6,7 +6,7 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 
 - **Full-text search** with prefix + fuzzy matching, title/tag boosting, tag facets and highlighted snippets (powered by [MiniSearch](https://github.com/lucaong/minisearch)).
 - **Answer weave** — question-like queries also get a short written answer built _only_ from retrieved sources (index pages + optional live web search), with per-sentence citations, domain trust tiers, retrieval timestamps and a confidence banner. Works offline as a deterministic weave; upgrades to prose with an LLM key.
-- **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
+- **UK & Australian number plate checker** with automatic backend checks — country is auto-detected (or pick one explicitly). UK: format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history. Australia: structural format validation against common current state shapes.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
 - **REST API** built on [Fastify](https://fastify.dev/) with schema validation.
 - **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites.
@@ -82,22 +82,22 @@ available as `beacon`.
 
 ## HTTP API
 
-| Method   | Path                  | Description                                          |
-| -------- | --------------------- | ---------------------------------------------------- |
-| `GET`    | `/api/health`         | Liveness + document count                            |
-| `GET`    | `/api/stats`          | Index statistics, top tags/sources                   |
-| `GET`    | `/api/search`         | `?q=&limit=&offset=&tags=&source=&fuzzy=&prefix=`    |
-| `GET`    | `/api/answer`         | Woven, cited answer for a query (`?q=&fresh=`)       |
-| `GET`    | `/api/documents`      | List documents (`?limit=&offset=`)                   |
-| `GET`    | `/api/documents/:id`  | Fetch one document                                   |
-| `POST`   | `/api/documents`      | Create/replace a document                            |
-| `PUT`    | `/api/documents/:id`  | Replace a document by id                             |
-| `DELETE` | `/api/documents/:id`  | Delete a document                                    |
-| `POST`   | `/api/documents/bulk` | `{ "documents": [...] }`                             |
-| `POST`   | `/api/crawl`          | `{ "url", "maxPages?", "sameOriginOnly?", "tags?" }` |
-| `POST`   | `/api/index/clear`    | Remove all documents                                 |
-| `GET`    | `/api/plate/:reg`     | Check a number plate (`?vehicle=&mot=&index=`)       |
-| `POST`   | `/api/plate/check`    | `{ "plate", "vehicle?", "mot?", "index?" }`          |
+| Method   | Path                  | Description                                                   |
+| -------- | --------------------- | ------------------------------------------------------------- |
+| `GET`    | `/api/health`         | Liveness + document count                                     |
+| `GET`    | `/api/stats`          | Index statistics, top tags/sources                            |
+| `GET`    | `/api/search`         | `?q=&limit=&offset=&tags=&source=&fuzzy=&prefix=`             |
+| `GET`    | `/api/answer`         | Woven, cited answer for a query (`?q=&fresh=`)                |
+| `GET`    | `/api/documents`      | List documents (`?limit=&offset=`)                            |
+| `GET`    | `/api/documents/:id`  | Fetch one document                                            |
+| `POST`   | `/api/documents`      | Create/replace a document                                     |
+| `PUT`    | `/api/documents/:id`  | Replace a document by id                                      |
+| `DELETE` | `/api/documents/:id`  | Delete a document                                             |
+| `POST`   | `/api/documents/bulk` | `{ "documents": [...] }`                                      |
+| `POST`   | `/api/crawl`          | `{ "url", "maxPages?", "sameOriginOnly?", "tags?" }`          |
+| `POST`   | `/api/index/clear`    | Remove all documents                                          |
+| `GET`    | `/api/plate/:reg`     | Check a number plate (`?country=GB\|AU&vehicle=&mot=&index=`) |
+| `POST`   | `/api/plate/check`    | `{ "plate", "country?", "vehicle?", "mot?", "index?" }`       |
 
 ### Search response
 
@@ -128,8 +128,12 @@ available as `beacon`.
 
 ## Number plate checker
 
-Runs a series of automatic checks on a UK vehicle registration mark and returns a
-structured report (each check is `pass` / `warn` / `fail` / `info` / `skipped`):
+Runs a series of automatic checks on a vehicle registration mark and returns a
+structured report (each check is `pass` / `warn` / `fail` / `info` / `skipped`).
+**UK and Australia** are supported today; the country is auto-detected from the
+plate's shape, or you can force one with `country: "GB" | "AU"`.
+
+### UK (`country: "GB"`)
 
 | Check                                                              | Source                                                                                              | Needs               |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------- |
@@ -140,13 +144,31 @@ structured report (each check is `pass` / `warn` / `fail` / `info` / `skipped`):
 | Manufacture-year vs plate-age consistency, export marker           | DVLA VES                                                                                            | `DVLA_VES_API_KEY`  |
 | Full MOT history, pass/fail counts, **odometer anomaly** detection | [DVSA MOT History API](https://documentation.history.mot.api.gov.uk/) (free)                        | `MOT_*` credentials |
 
-With no credentials the offline checks still run. Configure keys in `.env` — see
-[`.env.example`](.env.example).
+### Australia (`country: "AU"`)
+
+| Check                                                                                                                       | Source  | Needs |
+| --------------------------------------------------------------------------------------------------------------------------- | ------- | ----- |
+| Format & character set                                                                                                      | offline | —     |
+| Shape match against common current state formats (NSW `AA00AA`, QLD `00AAA`, general `AAA000` used by VIC/SA/TAS/NT/WA/ACT) | offline | —     |
+
+Unlike the UK, Australia has no single national scheme encoding the issuing
+state in the plate's characters — only the plate's physical border/slogan
+does. So a shape match reports _candidate_ states, not a determination, and
+there's no age-identifier decoding (Australian plates don't encode a
+registration date). The DVLA/DVSA are UK-only agencies and are skipped
+entirely for `AU`; each state runs its own free rego-check page instead (no
+open API), and [PPSR](https://ppsr.gov.au) covers finance/write-off status
+nationally.
+
+With no credentials the offline checks still run. Configure UK keys in `.env`
+— see [`.env.example`](.env.example).
 
 ```bash
-beacon plate "AB12 CDE"                     # human-readable report
-beacon plate "AB12 CDE" --json --index      # JSON, and store the report in the index
+beacon plate "AB12 CDE"                        # human-readable report, auto-detected as UK
+beacon plate "ABC 123" --country AU            # force Australian interpretation
+beacon plate "AB12 CDE" --json --index         # JSON, and store the report in the index
 curl 'http://localhost:7700/api/plate/AB12CDE?vehicle=false&mot=false'
+curl 'http://localhost:7700/api/plate/ABC123?country=AU'
 ```
 
 Set `BEACON_PLATE_INDEX_RESULTS=true` (or pass `index=true`) to save every check

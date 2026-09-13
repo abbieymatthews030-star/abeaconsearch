@@ -202,19 +202,31 @@ program
 
 program
   .command('plate <registration>')
-  .description('Run automatic checks on a UK number plate')
-  .option('--no-vehicle', 'skip the DVLA Vehicle Enquiry Service lookup')
-  .option('--no-mot', 'skip the DVSA MOT history lookup')
+  .description('Run automatic checks on a UK or Australian number plate')
+  .option('--country <code>', 'force interpretation as "GB" or "AU" instead of auto-detecting')
+  .option('--no-vehicle', 'skip the DVLA Vehicle Enquiry Service lookup (GB only)')
+  .option('--no-mot', 'skip the DVSA MOT history lookup (GB only)')
   .option('--index', 'also store the result in the search index', false)
   .option('--json', 'output raw JSON', false)
   .action(
     async (
       registration: string,
-      opts: { vehicle?: boolean; mot?: boolean; index?: boolean; json?: boolean },
+      opts: {
+        country?: string;
+        vehicle?: boolean;
+        mot?: boolean;
+        index?: boolean;
+        json?: boolean;
+      },
     ) => {
+      const country = opts.country?.trim().toUpperCase();
+      if (country && country !== 'GB' && country !== 'AU') {
+        throw new Error(`Unsupported --country "${opts.country}" (expected "GB" or "AU")`);
+      }
       const config = loadConfig();
       const checker = createPlateChecker(config);
       const check = await checker.check(registration, {
+        country: country as 'GB' | 'AU' | undefined,
         includeVehicleData: opts.vehicle !== false,
         includeMotHistory: opts.mot !== false,
       });
@@ -239,7 +251,7 @@ program
       };
       process.stdout.write(`\n  ${check.formatted}  —  ${check.summary.headline}\n`);
       process.stdout.write(
-        `  format: ${check.format}   valid: ${check.valid ? 'yes' : 'no'}   ` +
+        `  country: ${check.country}   format: ${check.format}   valid: ${check.valid ? 'yes' : 'no'}   ` +
           `${check.summary.pass} passed / ${check.summary.warn} warnings / ${check.summary.fail} failed\n\n`,
       );
       for (const item of check.checks) {
