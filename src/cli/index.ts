@@ -172,6 +172,7 @@ program
       tags: [],
       fuzzy: true,
       prefix: true,
+      sort: 'relevance',
     });
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);

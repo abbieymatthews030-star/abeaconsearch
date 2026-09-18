@@ -232,6 +232,21 @@ button {
   cursor: not-allowed;
 }
 
+.btn--active {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.btn--danger {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+.btn--danger:not(:disabled):hover {
+  background: var(--fail);
+  color: var(--bg);
+}
+
 /* ============================================================
    Search
    ============================================================ */
@@ -280,6 +295,67 @@ button {
 .search__meta strong {
   color: var(--fg);
   font-weight: 600;
+}
+
+.search__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.search__sort select {
+  background: transparent;
+  color: var(--fg);
+  border: 1px dashed var(--hair);
+  border-radius: 0;
+  padding: 0.15rem 0.3rem;
+  font: inherit;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.search__sort select:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--fg);
+}
+
+/* Autocomplete suggestions */
+.suggest {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.suggest button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.suggest button:hover,
+.suggest button.active {
+  background: var(--hair-soft);
+  color: var(--fg);
 }
 
 .search__updating {
@@ -564,6 +640,147 @@ button {
 
 .form .btn {
   align-self: flex-start;
+}
+
+/* ============================================================
+   Library
+   ============================================================ */
+
+.library__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.library .form {
+  margin: 1.1rem 0;
+}
+
+.library__list {
+  list-style: none;
+  margin: 1.1rem 0 0;
+  padding: 0;
+}
+
+.library__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px dotted var(--hair-soft);
+}
+
+.library__row:first-child {
+  border-top: 1px dotted var(--hair-soft);
+}
+
+.library__row-main {
+  min-width: 0;
+}
+
+.library__row-title {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.library__row-title a {
+  text-decoration: none;
+}
+
+.library__row-title a:hover {
+  text-decoration: underline;
+}
+
+.library__row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.library__remove {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  padding: 0.2rem 0;
+}
+
+.library__remove:hover {
+  color: var(--fail);
+}
+
+/* ============================================================
+   Settings
+   ============================================================ */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.settings__section {
+  border: 1px dashed var(--hair);
+  padding: 1.5rem;
+}
+
+.settings__section h2 {
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.diagnostics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.diagnostics div {
+  border-bottom: 1px dotted var(--hair-soft);
+  padding-bottom: 0.4rem;
+}
+
+.diagnostics dt {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+}
+
+.diagnostics dd {
+  margin: 0.25rem 0 0;
+  font-size: 0.84rem;
+}
+
+.settings__tool {
+  border: 1px dashed var(--hair);
+  padding: 1.5rem;
+}
+
+.settings__tool summary {
+  cursor: pointer;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+}
+
+.settings__tool[open] summary {
+  margin-bottom: 1.25rem;
 }
 
 /* ============================================================

@@ -3,14 +3,16 @@ import {
   api,
   type AnswerConfidence,
   type AnswerResponse,
+  type BeaconDocument,
   type HealthResponse,
   type IndexStats,
   type PlateCheck,
   type SearchResponse,
+  type SearchSort,
   type TrustTier,
 } from './api';
 
-type Tab = 'search' | 'plate' | 'add' | 'crawl' | 'about';
+type Tab = 'search' | 'library' | 'settings';
 
 const PAGE_SIZE = 10;
 
@@ -120,10 +122,8 @@ export function App(): JSX.Element {
           {(
             [
               ['search', 'Search'],
-              ['plate', 'Plate check'],
-              ['add', 'Add document'],
-              ['crawl', 'Crawl site'],
-              ['about', 'About'],
+              ['library', 'Library'],
+              ['settings', 'Settings'],
             ] as Array<[Tab, string]>
           ).map(([id, label]) => (
             <button
@@ -140,10 +140,8 @@ export function App(): JSX.Element {
 
       <main className="app__main">
         {tab === 'search' && <SearchView />}
-        {tab === 'plate' && <PlateView onDone={refreshStats} />}
-        {tab === 'add' && <AddView onDone={refreshStats} />}
-        {tab === 'crawl' && <CrawlView onDone={refreshStats} />}
-        {tab === 'about' && <AboutView />}
+        {tab === 'library' && <LibraryView onDone={refreshStats} />}
+        {tab === 'settings' && <SettingsView stats={stats} />}
       </main>
 
       <footer className="app__footer">
@@ -163,9 +161,17 @@ export function App(): JSX.Element {
   );
 }
 
+const SORT_OPTIONS: Array<[SearchSort, string]> = [
+  ['relevance', 'relevance'],
+  ['newest', 'newest'],
+  ['oldest', 'oldest'],
+  ['title', 'title a–z'],
+];
+
 function SearchView(): JSX.Element {
   const [input, setInput] = useState('');
   const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [sort, setSort] = useState<SearchSort>('relevance');
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +179,11 @@ function SearchView(): JSX.Element {
   const query = useDebounced(input, 200);
   const answerQuery = useDebounced(input.trim(), 900);
   const abortRef = useRef<AbortController | null>(null);
+
+  const suggestQuery = useDebounced(input, 120);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const answersEnabled = health?.answer.enabled ?? false;
@@ -223,7 +234,7 @@ function SearchView(): JSX.Element {
 
   useEffect(() => {
     setPage(0);
-  }, [query, activeTags]);
+  }, [query, activeTags, sort]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -232,7 +243,7 @@ function SearchView(): JSX.Element {
     setLoading(true);
     api
       .search(
-        { q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE, tags: activeTags },
+        { q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE, tags: activeTags, sort },
         controller.signal,
       )
       .then((res) => {
@@ -247,7 +258,35 @@ function SearchView(): JSX.Element {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [query, page, activeTags]);
+  }, [query, page, activeTags, sort]);
+
+  useEffect(() => {
+    const q = suggestQuery.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const controller = new AbortController();
+    api
+      .suggest(q, controller.signal)
+      .then((res) =>
+        setSuggestions(res.suggestions.filter((s) => s.toLowerCase() !== q.toLowerCase())),
+      )
+      .catch(() => {
+        /* suggestions are a convenience; ignore failures */
+      });
+    return () => controller.abort();
+  }, [suggestQuery]);
+
+  useEffect(() => {
+    setActiveSuggestion(-1);
+  }, [suggestions]);
+
+  const pickSuggestion = (s: string) => {
+    setInput(s);
+    setSuggestOpen(false);
+    setActiveSuggestion(-1);
+  };
 
   const totalPages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
   const facetTags = useMemo(
@@ -271,8 +310,40 @@ function SearchView(): JSX.Element {
           autoFocus
           placeholder="search the index"
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            setInput(event.target.value);
+            setSuggestOpen(true);
+          }}
+          onFocus={() => setSuggestOpen(true)}
+          onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+          onKeyDown={(event) => {
+            const open = suggestOpen && suggestions.length > 0;
+            if (event.key === 'Escape') {
+              setSuggestOpen(false);
+              setActiveSuggestion(-1);
+            } else if (event.key === 'ArrowDown') {
+              if (!open) return;
+              event.preventDefault();
+              setActiveSuggestion((i) => (i + 1) % suggestions.length);
+            } else if (event.key === 'ArrowUp') {
+              if (!open) return;
+              event.preventDefault();
+              setActiveSuggestion((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+            } else if (event.key === 'Enter') {
+              const chosen = open ? suggestions[activeSuggestion] : undefined;
+              if (!chosen) return;
+              event.preventDefault();
+              pickSuggestion(chosen);
+            }
+          }}
           aria-label="Search query"
+          aria-autocomplete="list"
+          role="combobox"
+          aria-expanded={suggestOpen && suggestions.length > 0}
+          aria-controls="search-suggest-list"
+          aria-activedescendant={
+            activeSuggestion >= 0 ? `search-suggest-${activeSuggestion}` : undefined
+          }
         />
         {input && (
           <button
@@ -283,6 +354,28 @@ function SearchView(): JSX.Element {
           >
             clear
           </button>
+        )}
+        {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
+          <ul className="suggest" role="listbox" id="search-suggest-list">
+            {suggestions.map((s, i) => (
+              <li key={s}>
+                <button
+                  type="button"
+                  id={`search-suggest-${i}`}
+                  role="option"
+                  aria-selected={i === activeSuggestion}
+                  className={i === activeSuggestion ? 'active' : undefined}
+                  onMouseEnter={() => setActiveSuggestion(i)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pickSuggestion(s);
+                  }}
+                >
+                  {s}
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
@@ -330,6 +423,18 @@ function SearchView(): JSX.Element {
               {' · '}
               <span className="search__updating" aria-hidden /> updating
             </>
+          )}
+          {result.total > 1 && (
+            <label className="search__sort">
+              sort
+              <select value={sort} onChange={(event) => setSort(event.target.value as SearchSort)}>
+                {SORT_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
         </p>
       )}
@@ -388,8 +493,17 @@ function SearchView(): JSX.Element {
           <span>
             {query
               ? 'Nothing in the index matched. Try a different query, or clear the active tag filters.'
-              : 'Type to search, or use Add / Crawl to fill the index.'}
+              : 'Type to search, or visit Library to add content.'}
           </span>
+          {result.suggestion && (
+            <button
+              type="button"
+              className="answer__cta"
+              onClick={() => setInput(result.suggestion!)}
+            >
+              ↳ did you mean “{result.suggestion}”?
+            </button>
+          )}
           {query && answersEnabled && !answerRequested && (
             <button type="button" className="answer__cta" onClick={() => runAnswer(query, false)}>
               ↳ weave an answer from live sources instead
@@ -402,6 +516,164 @@ function SearchView(): JSX.Element {
       )}
 
       {result && result.total > PAGE_SIZE && (
+        <div className="pager">
+          <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+            ← Previous
+          </button>
+          <span>
+            Page {page + 1} / {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={page + 1 >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next →
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
+  const [docs, setDocs] = useState<BeaconDocument[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [panel, setPanel] = useState<'add' | 'crawl' | null>(null);
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    api
+      .documents({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      .then((res) => {
+        setDocs(res.documents);
+        setTotal(res.total);
+        setError(null);
+      })
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : 'Failed to load documents'),
+      )
+      .finally(() => setLoading(false));
+  }, [page]);
+
+  useEffect(refresh, [refresh]);
+
+  const handleAdded = () => {
+    setPanel(null);
+    setPage(0);
+    refresh();
+    onDone();
+  };
+
+  const remove = (doc: BeaconDocument) => {
+    if (!window.confirm(`Remove "${doc.title}" from the index?`)) return;
+    api
+      .deleteDocument(doc.id)
+      .then(() => {
+        refresh();
+        onDone();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to remove'));
+  };
+
+  const clearAll = () => {
+    if (!window.confirm(`Remove all ${total.toLocaleString()} documents from the index?`)) return;
+    api
+      .clearIndex()
+      .then(() => {
+        setPage(0);
+        refresh();
+        onDone();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to clear'));
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <section className="library">
+      <div className="library__actions">
+        <button
+          type="button"
+          className={panel === 'add' ? 'btn btn--active' : 'btn'}
+          onClick={() => setPanel((p) => (p === 'add' ? null : 'add'))}
+        >
+          + add document
+        </button>
+        <button
+          type="button"
+          className={panel === 'crawl' ? 'btn btn--active' : 'btn'}
+          onClick={() => setPanel((p) => (p === 'crawl' ? null : 'crawl'))}
+        >
+          ⤓ crawl site
+        </button>
+        {total > 0 && (
+          <button type="button" className="btn btn--danger" onClick={clearAll}>
+            clear index
+          </button>
+        )}
+      </div>
+
+      {panel === 'add' && <AddView onDone={handleAdded} />}
+      {panel === 'crawl' && <CrawlView onDone={handleAdded} />}
+
+      {error && <p className="notice notice--error">{error}</p>}
+
+      <p className="search__meta">
+        <strong>{total.toLocaleString()}</strong> document{total === 1 ? '' : 's'} indexed
+        {loading && (
+          <>
+            {' · '}
+            <span className="search__updating" aria-hidden /> loading
+          </>
+        )}
+      </p>
+
+      {docs.length > 0 ? (
+        <ul className="library__list">
+          {docs.map((doc) => (
+            <li key={doc.id} className="library__row">
+              <div className="library__row-main">
+                <strong className="library__row-title">
+                  {doc.url ? (
+                    <a href={doc.url} target="_blank" rel="noreferrer">
+                      {doc.title}
+                    </a>
+                  ) : (
+                    doc.title
+                  )}
+                </strong>
+                <div className="library__row-meta">
+                  {doc.source && <span>{doc.source}</span>}
+                  {doc.tags.length > 0 && <span>{doc.tags.join(', ')}</span>}
+                  <span>{relativeTime(doc.updatedAt)}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="library__remove"
+                onClick={() => remove(doc)}
+                aria-label={`Remove ${doc.title}`}
+              >
+                remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        !loading && (
+          <div className="empty">
+            <Beacon size={120} />
+            <strong>index empty</strong>
+            <span>Add a document or crawl a site to get started.</span>
+          </div>
+        )
+      )}
+
+      {total > PAGE_SIZE && (
         <div className="pager">
           <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             ← Previous
@@ -886,7 +1158,7 @@ function AboutView(): JSX.Element {
       </p>
       <h3>Number plate checker</h3>
       <p>
-        The <em>Plate check</em> tab runs automatic checks on a UK registration: format validation,
+        The plate checker (above) runs automatic checks on a UK registration: format validation,
         age identifier, DVLA region, and — when API keys are configured — DVLA tax/MOT status and
         DVSA MOT history. Offline checks need no credentials.
       </p>
@@ -896,6 +1168,72 @@ function AboutView(): JSX.Element {
         <code>beacon plate &quot;AB12 CDE&quot;</code>. An MCP server (<code>beacon-mcp</code>)
         exposes the plate checker and the search index as tools for Claude and other MCP clients.
       </p>
+    </section>
+  );
+}
+
+function SettingsView({ stats }: { stats: IndexStats | null }): JSX.Element {
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+
+  useEffect(() => {
+    api
+      .health()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, []);
+
+  const answerStatus = health
+    ? health.answer.enabled
+      ? health.answer.llm.length > 0
+        ? `on · ${health.answer.llm.join(', ')}`
+        : 'on · extractive (no LLM key)'
+      : 'off'
+    : '—';
+
+  return (
+    <section className="settings">
+      <section className="settings__section">
+        <h2>Diagnostics</h2>
+        <dl className="diagnostics">
+          <div>
+            <dt>Documents</dt>
+            <dd>{stats ? stats.documents.toLocaleString() : '—'}</dd>
+          </div>
+          <div>
+            <dt>Tags / sources</dt>
+            <dd>
+              {stats ? `${stats.tags} / ${stats.sources}` : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>Uptime</dt>
+            <dd>{health ? `${Math.round(health.uptimeSeconds / 60)}m` : '—'}</dd>
+          </div>
+          <div>
+            <dt>Answer weave</dt>
+            <dd>{answerStatus}</dd>
+          </div>
+          <div>
+            <dt>Web search provider</dt>
+            <dd>{health?.answer.webSearch ?? 'none configured'}</dd>
+          </div>
+          <div>
+            <dt>DVLA vehicle data</dt>
+            <dd>{health ? (health.plateChecks.vehicleData ? 'configured' : 'not configured') : '—'}</dd>
+          </div>
+          <div>
+            <dt>DVSA MOT history</dt>
+            <dd>{health ? (health.plateChecks.motHistory ? 'configured' : 'not configured') : '—'}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <details className="settings__tool">
+        <summary>Number plate checker</summary>
+        <PlateView onDone={() => {}} />
+      </details>
+
+      <AboutView />
     </section>
   );
 }

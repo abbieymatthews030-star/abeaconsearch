@@ -3,7 +3,16 @@ import { SearchEngine } from './search-engine.js';
 import type { SearchQuery } from './types.js';
 
 function q(overrides: Partial<SearchQuery> = {}): SearchQuery {
-  return { q: '', limit: 10, offset: 0, tags: [], fuzzy: true, prefix: true, ...overrides };
+  return {
+    q: '',
+    limit: 10,
+    offset: 0,
+    tags: [],
+    fuzzy: true,
+    prefix: true,
+    sort: 'relevance',
+    ...overrides,
+  };
 }
 
 function seed(engine: SearchEngine): void {
@@ -122,5 +131,44 @@ describe('SearchEngine', () => {
     const stats = engine.stats('/tmp/index.json');
     expect(stats.documents).toBe(3);
     expect(stats.topTags[0]).toEqual({ tag: 'docs', count: 2 });
+  });
+
+  it('sorts by title and by newest/oldest updatedAt', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    const byTitle = engine.search(q({ sort: 'title' }));
+    expect(byTitle.hits.map((h) => h.id)).toEqual(['b', 'a', 'c']);
+
+    const newest = engine.search(q({ sort: 'newest' }));
+    const oldest = engine.search(q({ sort: 'oldest' }));
+    expect(newest.hits.map((h) => h.id)).toEqual([...oldest.hits.map((h) => h.id)].reverse());
+  });
+
+  it('offers a "did you mean" suggestion for a near-miss query', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    const res = engine.search(q({ q: 'crawlr', fuzzy: false }));
+    expect(res.total).toBe(0);
+    expect(res.suggestion).toBe('crawler');
+  });
+
+  it('does not suggest anything for a query that already matches', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    const res = engine.search(q({ q: 'crawler' }));
+    expect(res.suggestion).toBeUndefined();
+  });
+
+  it('suggests completions for a partial term', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    const suggestions = engine.suggest('craw');
+    expect(suggestions).toContain('crawler');
+  });
+
+  it('returns no suggestions for an empty query', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    expect(engine.suggest('')).toEqual([]);
   });
 });

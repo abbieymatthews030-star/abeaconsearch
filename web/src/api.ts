@@ -1,7 +1,13 @@
 // Response types are the backend's own definitions, shared via the `@core`
 // path alias (see vite.config.ts / tsconfig.json). These are type-only imports,
 // erased at build time — the web bundle never pulls in backend code.
-import type { BeaconDocument, IndexStats, SearchHit, SearchResponse } from '@core/types';
+import type {
+  BeaconDocument,
+  IndexStats,
+  SearchHit,
+  SearchResponse,
+  SuggestResponse,
+} from '@core/types';
 import type { PlateCheck } from '@core/plate/types';
 import type {
   AnswerClaim,
@@ -21,14 +27,25 @@ export type {
   PlateCheck,
   SearchHit,
   SearchResponse,
+  SuggestResponse,
   TrustTier,
 };
+
+export type SearchSort = 'relevance' | 'newest' | 'oldest' | 'title';
 
 export interface HealthResponse {
   status: 'ok';
   documents: number;
   uptimeSeconds: number;
+  plateChecks: { vehicleData: boolean; motHistory: boolean };
   answer: { enabled: boolean; webSearch: string | null; llm: string[] };
+}
+
+export interface DocumentsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  documents: BeaconDocument[];
 }
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -56,6 +73,7 @@ export interface SearchParams {
   offset?: number;
   tags?: string[];
   source?: string;
+  sort?: SearchSort;
 }
 
 export const api = {
@@ -65,11 +83,22 @@ export const api = {
     if (params.limit) qs.set('limit', String(params.limit));
     if (params.offset) qs.set('offset', String(params.offset));
     if (params.source) qs.set('source', params.source);
+    if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
     for (const tag of params.tags ?? []) qs.append('tags', tag);
     return request<SearchResponse>(`/api/search?${qs.toString()}`, { signal });
   },
+  suggest(q: string, signal?: AbortSignal): Promise<SuggestResponse> {
+    const qs = new URLSearchParams({ q });
+    return request<SuggestResponse>(`/api/suggest?${qs.toString()}`, { signal });
+  },
   stats(): Promise<IndexStats> {
     return request<IndexStats>('/api/stats');
+  },
+  documents(params: { limit?: number; offset?: number } = {}): Promise<DocumentsResponse> {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.offset) qs.set('offset', String(params.offset));
+    return request<DocumentsResponse>(`/api/documents?${qs.toString()}`);
   },
   health(): Promise<HealthResponse> {
     return request<HealthResponse>('/api/health');

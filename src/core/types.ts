@@ -66,8 +66,20 @@ export const searchQuerySchema = z.object({
   source: z.string().trim().min(1).max(256).optional(),
   fuzzy: booleanParam(true),
   prefix: booleanParam(true),
+  sort: z.enum(['relevance', 'newest', 'oldest', 'title']).default('relevance'),
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+export const suggestQuerySchema = z.object({
+  q: z.string().max(1024).default(''),
+  limit: z.coerce.number().int().min(1).max(20).default(8),
+});
+export type SuggestQuery = z.infer<typeof suggestQuerySchema>;
+
+export interface SuggestResponse {
+  query: string;
+  suggestions: string[];
+}
 
 export const answerQuerySchema = z.object({
   q: z.string().trim().min(2).max(1024),
@@ -106,6 +118,8 @@ export interface SearchResponse {
     tags: Record<string, number>;
     sources: Record<string, number>;
   };
+  /** Offered when the query matched nothing but a nearby spelling did. */
+  suggestion?: string;
 }
 
 export interface IndexStats {

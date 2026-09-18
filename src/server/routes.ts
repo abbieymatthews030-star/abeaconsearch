@@ -14,6 +14,7 @@ import {
   documentInputSchema,
   optionalBooleanParam,
   searchQuerySchema,
+  suggestQuerySchema,
 } from '../core/types.js';
 
 const plateCheckQuerySchema = z.object({
@@ -104,6 +105,11 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       return engine.search(query);
     });
 
+    app.get('/suggest', async (request) => {
+      const { q, limit } = suggestQuerySchema.parse(request.query);
+      return { query: q.trim(), suggestions: engine.suggest(q, limit) };
+    });
+
     app.get('/answer', async (request) => {
       if (!ctx.answerService) throw new HttpError(404, 'answer synthesis is disabled');
       const { q, fresh } = answerQuerySchema.parse(request.query);
@@ -157,12 +163,14 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     app.post('/documents/bulk', async (request, reply) => {
       const { documents } = bulkInputSchema.parse(request.body);
       const stored = documents.map((doc) => engine.upsert(doc));
+      await engine.flush();
       reply.status(201);
       return { indexed: stored.length, ids: stored.map((d) => d.id) };
     });
 
     app.post('/index/clear', async () => {
       engine.clear();
+      await engine.flush();
       return { ok: true, documents: engine.size };
     });
 
