@@ -646,6 +646,11 @@ button {
    Library
    ============================================================ */
 
+.library h2 {
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
 .library__actions {
   display: flex;
   flex-wrap: wrap;
@@ -1271,6 +1276,232 @@ button {
 }
 
 /* ============================================================
+   Adaptive primary cards (domain / IP / calculation / plate)
+   ============================================================ */
+
+.primary-card {
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--fg);
+  padding: 1rem 1.1rem 0.85rem;
+  margin: 0.85rem 0 1.5rem;
+}
+
+.primary-card--plate {
+  border-left-color: var(--ok);
+}
+
+.primary-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.primary-card__tag {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+}
+
+.primary-card__title {
+  font-size: 1rem;
+  word-break: break-all;
+}
+
+.primary-card__result {
+  font-size: 1.4rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.primary-card__result strong {
+  font-weight: 600;
+}
+
+.primary-card__notices {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0 0;
+  border-top: 1px dotted var(--hair-soft);
+  color: var(--faint);
+  font-size: 0.76rem;
+}
+
+.primary-card__sources {
+  margin: 0.6rem 0 0;
+  color: var(--faint);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Generic key/value fact list — reused by domain / IP cards */
+.kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.kv div {
+  border-bottom: 1px dotted var(--hair-soft);
+  padding-bottom: 0.4rem;
+}
+
+.kv dt {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+}
+
+.kv dd {
+  margin: 0.25rem 0 0;
+  font-size: 0.84rem;
+  word-break: break-word;
+}
+
+/* ============================================================
+   Filters (collapsed by default — sort + tag chips)
+   ============================================================ */
+
+.search__filters-toggle {
+  margin-left: auto;
+  border: 1px dashed var(--hair);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  cursor: pointer;
+}
+
+.search__filters-toggle:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px dashed var(--hair-soft);
+}
+
+.filters .search__sort {
+  margin-left: 0;
+}
+
+/* ============================================================
+   History
+   ============================================================ */
+
+.history__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px dotted var(--hair-soft);
+}
+
+.history__query {
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.history__query:hover {
+  text-decoration: underline;
+}
+
+.history__kind {
+  color: var(--faint);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.history__time {
+  color: var(--faint);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Sources
+   ============================================================ */
+
+.sources__overview {
+  margin-bottom: 2rem;
+}
+
+.sources__overview h2 {
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.sources__list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.sources__list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px dotted var(--hair-soft);
+  font-size: 0.84rem;
+}
+
+.sources__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border: 1px solid var(--faint);
+}
+
+.sources__dot--on {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.sources__detail {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 0.76rem;
+  text-align: right;
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 
@@ -1286,6 +1517,16 @@ button {
   .checks__detail {
     grid-column: 1 / -1;
     padding-left: 5.25rem;
+  }
+
+  .sources__list li,
+  .history__row {
+    flex-wrap: wrap;
+  }
+
+  .sources__detail {
+    margin-left: 1.1rem;
+    text-align: left;
   }
 }
 

@@ -19,6 +19,14 @@ export interface Config {
   maxBodyBytes: number;
   plate: PlateConfig;
   answer: AnswerConfig;
+  lookups: LookupsConfig;
+}
+
+export interface LookupsConfig {
+  /** Master switch for the universal box's domain/IP lookups (DNS + RDAP). */
+  enabled: boolean;
+  /** Per-request timeout for the DNS / RDAP calls (ms). */
+  timeoutMs: number;
 }
 
 export interface AnswerConfig {
@@ -94,9 +102,10 @@ function readOptional(name: string): string | undefined {
   return raw === undefined || raw.trim() === '' ? undefined : raw.trim();
 }
 
-export interface ConfigOverrides extends Partial<Omit<Config, 'plate' | 'answer'>> {
+export interface ConfigOverrides extends Partial<Omit<Config, 'plate' | 'answer' | 'lookups'>> {
   plate?: Partial<PlateConfig>;
   answer?: Partial<AnswerConfig>;
+  lookups?: Partial<LookupsConfig>;
 }
 
 const WEB_SEARCH_PROVIDERS = ['brave', 'tavily', 'searxng'] as const;
@@ -179,14 +188,19 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       trustedDomains: readList('ANSWER_TRUSTED_DOMAINS'),
       allowPrivateHosts: readBool('BEACON_ANSWER_ALLOW_PRIVATE', false),
     },
+    lookups: {
+      enabled: readBool('BEACON_LOOKUPS_ENABLED', true),
+      timeoutMs: readInt('BEACON_LOOKUPS_TIMEOUT_MS', 8_000),
+    },
   };
 
-  // `plate` / `answer` are merged rather than replaced so callers can override a
-  // single nested field without restating the whole sub-config.
+  // `plate` / `answer` / `lookups` are merged rather than replaced so callers
+  // can override a single nested field without restating the whole sub-config.
   return {
     ...base,
     ...overrides,
     plate: { ...base.plate, ...overrides.plate },
     answer: { ...base.answer, ...overrides.answer },
+    lookups: { ...base.lookups, ...overrides.lookups },
   };
 }

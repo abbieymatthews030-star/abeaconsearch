@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { AnswerBusyError, type AnswerService } from '../core/answer/index.js';
 import type { Config } from '../core/config.js';
 import { crawl } from '../core/crawler.js';
+import { CalculationError, evaluateExpression } from '../core/lookups/calculator.js';
+import { lookupDomain } from '../core/lookups/domain.js';
+import { lookupIp } from '../core/lookups/ip.js';
 import type { PlateChecker } from '../core/plate/checker.js';
 import { plateCheckToDocument } from '../core/plate/index.js';
+import { classifyQuery, type PrimaryResult, type UniversalQueryResponse } from '../core/query-router.js';
 import type { PersistentEngine } from '../core/store.js';
 import {
   answerQuerySchema,
@@ -37,7 +41,7 @@ export interface RouteContext {
 
 /** Canonical `/health` body, used by both `/health` and `/api/health`. */
 export function healthPayload(
-  ctx: Pick<RouteContext, 'engine' | 'plateChecker' | 'answerService'>,
+  ctx: Pick<RouteContext, 'engine' | 'plateChecker' | 'answerService' | 'config'>,
 ) {
   return {
     status: 'ok' as const,
@@ -47,6 +51,7 @@ export function healthPayload(
     answer: ctx.answerService
       ? ctx.answerService.capabilities
       : { enabled: false as const, webSearch: null, llm: [] as string[] },
+    lookups: { enabled: ctx.config.lookups.enabled },
   };
 }
 
@@ -103,6 +108,57 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     app.get('/search', async (request) => {
       const query = searchQuerySchema.parse(request.query);
       return engine.search(query);
+    });
+
+    // --- Universal query ------------------------------------------------------
+    // One box, many shapes: classify the raw text and, alongside the usual
+    // local-index search, attach a structured "primary" result when the query
+    // looks like a domain, IP, arithmetic expression, or a plate check.
+    app.get('/query', async (request): Promise<UniversalQueryResponse> => {
+      const query = searchQuerySchema.parse(request.query);
+      const classified = classifyQuery(query.q);
+      const local = engine.search(query);
+
+      let primary: PrimaryResult | null = null;
+      if (classified.kind === 'domain') {
+        primary = config.lookups.enabled
+          ? {
+              kind: 'domain',
+              domain: classified.value,
+              enabled: true,
+              data: await lookupDomain(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+            }
+          : { kind: 'domain', domain: classified.value, enabled: false };
+      } else if (classified.kind === 'ip') {
+        primary = config.lookups.enabled
+          ? {
+              kind: 'ip',
+              ip: classified.value,
+              enabled: true,
+              data: await lookupIp(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+            }
+          : { kind: 'ip', ip: classified.value, enabled: false };
+      } else if (classified.kind === 'calculation') {
+        try {
+          primary = { kind: 'calculation', expression: classified.value, result: evaluateExpression(classified.value) };
+        } catch (err) {
+          primary = {
+            kind: 'calculation',
+            expression: classified.value,
+            error: err instanceof CalculationError ? err.message : 'could not evaluate',
+          };
+        }
+      } else if (classified.kind === 'plate') {
+        primary = {
+          kind: 'plate',
+          data: await plateChecker.check(classified.value, {
+            includeVehicleData: true,
+            includeMotHistory: true,
+          }),
+        };
+      }
+
+      return { query: query.q, kind: classified.kind, primary, local };
     });
 
     app.get('/suggest', async (request) => {

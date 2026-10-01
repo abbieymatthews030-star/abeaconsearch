@@ -16,6 +16,17 @@ import type {
   AnswerSource,
   TrustTier,
 } from '@core/answer/types';
+import type {
+  CalculationPrimary,
+  DomainPrimary,
+  IpPrimary,
+  PlatePrimary,
+  PrimaryResult,
+  QueryKind,
+  UniversalQueryResponse,
+} from '@core/query-router';
+import type { DomainLookup } from '@core/lookups/domain';
+import type { IpLookup } from '@core/lookups/ip';
 
 export type {
   AnswerClaim,
@@ -23,12 +34,21 @@ export type {
   AnswerResponse,
   AnswerSource,
   BeaconDocument,
+  CalculationPrimary,
+  DomainLookup,
+  DomainPrimary,
   IndexStats,
+  IpLookup,
+  IpPrimary,
   PlateCheck,
+  PlatePrimary,
+  PrimaryResult,
+  QueryKind,
   SearchHit,
   SearchResponse,
   SuggestResponse,
   TrustTier,
+  UniversalQueryResponse,
 };
 
 export type SearchSort = 'relevance' | 'newest' | 'oldest' | 'title';
@@ -39,6 +59,7 @@ export interface HealthResponse {
   uptimeSeconds: number;
   plateChecks: { vehicleData: boolean; motHistory: boolean };
   answer: { enabled: boolean; webSearch: string | null; llm: string[] };
+  lookups: { enabled: boolean };
 }
 
 export interface DocumentsResponse {
@@ -86,6 +107,20 @@ export const api = {
     if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
     for (const tag of params.tags ?? []) qs.append('tags', tag);
     return request<SearchResponse>(`/api/search?${qs.toString()}`, { signal });
+  },
+  /**
+   * The universal box: classifies `q` and, alongside the usual local search,
+   * attaches a structured "primary" result (domain / IP / calculation / plate).
+   */
+  query(params: SearchParams, signal?: AbortSignal): Promise<UniversalQueryResponse> {
+    const qs = new URLSearchParams();
+    qs.set('q', params.q);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.offset) qs.set('offset', String(params.offset));
+    if (params.source) qs.set('source', params.source);
+    if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
+    for (const tag of params.tags ?? []) qs.append('tags', tag);
+    return request<UniversalQueryResponse>(`/api/query?${qs.toString()}`, { signal });
   },
   suggest(q: string, signal?: AbortSignal): Promise<SuggestResponse> {
     const qs = new URLSearchParams({ q });

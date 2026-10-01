@@ -4,15 +4,20 @@ import {
   type AnswerConfidence,
   type AnswerResponse,
   type BeaconDocument,
+  type CalculationPrimary,
+  type DomainPrimary,
   type HealthResponse,
   type IndexStats,
+  type IpPrimary,
   type PlateCheck,
-  type SearchResponse,
+  type PrimaryResult,
+  type QueryKind,
   type SearchSort,
   type TrustTier,
+  type UniversalQueryResponse,
 } from './api';
 
-type Tab = 'search' | 'library' | 'settings';
+type Tab = 'search' | 'history' | 'sources' | 'settings';
 
 const PAGE_SIZE = 10;
 
@@ -35,6 +40,16 @@ function isQuestionLike(q: string): boolean {
   if (t.includes('?')) return true;
   if (QUESTION_STARTS.test(t)) return true;
   return t.split(/\s+/).length >= 4;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A bare email or a quoted name reads as "research this", not "search for this text". */
+function looksLikeResearchTarget(q: string): boolean {
+  const t = q.trim();
+  if (EMAIL_RE.test(t)) return true;
+  const quoted = /^["“](.+)["”]$/.exec(t);
+  return Boolean(quoted?.[1]?.trim());
 }
 
 function relativeTime(iso: string): string {
@@ -60,6 +75,14 @@ const TRUST_LABEL: Record<TrustTier, string> = {
   established: 'established',
   community: 'unverified reliability',
   unverified: 'unverified',
+};
+
+const KIND_LABEL: Record<QueryKind, string> = {
+  domain: 'domain',
+  ip: 'ip address',
+  calculation: 'calculation',
+  plate: 'plate check',
+  default: 'search',
 };
 
 /** ASCII-style radial dot burst — the "beacon". Pure SVG, inherits color. */
@@ -97,9 +120,56 @@ function Beacon({ size = 200 }: { size?: number }): JSX.Element {
   );
 }
 
+// --- Local, per-browser query history ----------------------------------------
+// There is no server-side history store — this is a convenience for the
+// person at this browser, not shared data, so it lives in localStorage.
+
+const HISTORY_KEY = 'beacon:history';
+const HISTORY_LIMIT = 50;
+
+interface HistoryEntry {
+  query: string;
+  kind: QueryKind;
+  at: string;
+}
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as HistoryEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries: HistoryEntry[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_LIMIT)));
+  } catch {
+    /* storage can be unavailable (private browsing, quota) — history is a convenience */
+  }
+}
+
+/** How many distinct sources/capabilities Beacon currently has wired up. */
+function countConnectedSources(health: HealthResponse | null): number {
+  if (!health) return 0;
+  let n = 1; // the local full-text index is always available
+  if (health.lookups.enabled) n += 1; // domain / IP lookups (DNS + RDAP)
+  if (health.plateChecks.vehicleData) n += 1;
+  if (health.plateChecks.motHistory) n += 1;
+  if (health.answer.webSearch) n += 1;
+  if (health.answer.llm.length > 0) n += 1;
+  return n;
+}
+
 export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>('search');
   const [stats, setStats] = useState<IndexStats | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [input, setInput] = useState('');
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
 
   const refreshStats = useCallback(() => {
     api
@@ -107,8 +177,40 @@ export function App(): JSX.Element {
       .then(setStats)
       .catch(() => setStats(null));
   }, []);
-
   useEffect(refreshStats, [refreshStats]);
+
+  useEffect(() => {
+    api
+      .health()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, []);
+
+  const recordHistory = useCallback((query: string, kind: QueryKind) => {
+    const q = query.trim();
+    if (!q) return;
+    setHistory((prev) => {
+      if (prev[0]?.query === q) return prev;
+      const next = [{ query: q, kind, at: new Date().toISOString() }, ...prev.filter((e) => e.query !== q)].slice(
+        0,
+        HISTORY_LIMIT,
+      );
+      saveHistory(next);
+      return next;
+    });
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    saveHistory([]);
+  }, []);
+
+  const runFromHistory = (query: string) => {
+    setInput(query);
+    setTab('search');
+  };
+
+  const connectedSources = countConnectedSources(health);
 
   return (
     <div className="app">
@@ -116,13 +218,14 @@ export function App(): JSX.Element {
         <div className="brand">
           <Beacon size={40} />
           <h1>ABEACON</h1>
-          <p>self-hostable full-text search</p>
+          <p>multi-source search</p>
         </div>
         <nav className="tabs" aria-label="Sections">
           {(
             [
               ['search', 'Search'],
-              ['library', 'Library'],
+              ['history', 'History'],
+              ['sources', 'Sources'],
               ['settings', 'Settings'],
             ] as Array<[Tab, string]>
           ).map(([id, label]) => (
@@ -139,16 +242,16 @@ export function App(): JSX.Element {
       </header>
 
       <main className="app__main">
-        {tab === 'search' && <SearchView />}
-        {tab === 'library' && <LibraryView onDone={refreshStats} />}
-        {tab === 'settings' && <SettingsView stats={stats} />}
+        {tab === 'search' && <SearchView input={input} onInputChange={setInput} onCommit={recordHistory} health={health} />}
+        {tab === 'history' && <HistoryView entries={history} onPick={runFromHistory} onClear={clearHistory} />}
+        {tab === 'sources' && <SourcesView stats={stats} health={health} onDone={refreshStats} />}
+        {tab === 'settings' && <SettingsView stats={stats} health={health} />}
       </main>
 
       <footer className="app__footer">
-        {stats ? (
+        {health ? (
           <span>
-            {stats.documents.toLocaleString()} documents · {stats.tags} tags · {stats.sources}{' '}
-            sources
+            {connectedSources} source{connectedSources === 1 ? '' : 's'} connected
           </span>
         ) : (
           <span>Index status unavailable</span>
@@ -168,37 +271,41 @@ const SORT_OPTIONS: Array<[SearchSort, string]> = [
   ['title', 'title a–z'],
 ];
 
-function SearchView(): JSX.Element {
-  const [input, setInput] = useState('');
+function SearchView({
+  input,
+  onInputChange,
+  onCommit,
+  health,
+}: {
+  input: string;
+  onInputChange: (value: string) => void;
+  onCommit: (query: string, kind: QueryKind) => void;
+  health: HealthResponse | null;
+}): JSX.Element {
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [sort, setSort] = useState<SearchSort>('relevance');
   const [page, setPage] = useState(0);
-  const [result, setResult] = useState<SearchResponse | null>(null);
+  const [result, setResult] = useState<UniversalQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const query = useDebounced(input, 200);
   const answerQuery = useDebounced(input.trim(), 900);
+  const historyQuery = useDebounced(input.trim(), 1500);
   const abortRef = useRef<AbortController | null>(null);
+  const lastRecordedRef = useRef<string | null>(null);
 
   const suggestQuery = useDebounced(input, 120);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(-1);
 
-  const [health, setHealth] = useState<HealthResponse | null>(null);
   const answersEnabled = health?.answer.enabled ?? false;
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
   const [answerLoading, setAnswerLoading] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [answerRequested, setAnswerRequested] = useState(false);
   const answerAbort = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    api
-      .health()
-      .then(setHealth)
-      .catch(() => setHealth(null));
-  }, []);
 
   const runAnswer = useCallback((q: string, fresh: boolean) => {
     answerAbort.current?.abort();
@@ -229,7 +336,7 @@ function SearchView(): JSX.Element {
     setAnswerRequested(false);
     setAnswerLoading(false);
     if (!answersEnabled || !answerQuery) return;
-    if (isQuestionLike(answerQuery)) runAnswer(answerQuery, false);
+    if (isQuestionLike(answerQuery) || looksLikeResearchTarget(answerQuery)) runAnswer(answerQuery, false);
   }, [answerQuery, answersEnabled, runAnswer]);
 
   useEffect(() => {
@@ -242,7 +349,7 @@ function SearchView(): JSX.Element {
     abortRef.current = controller;
     setLoading(true);
     api
-      .search(
+      .query(
         { q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE, tags: activeTags, sort },
         controller.signal,
       )
@@ -259,6 +366,13 @@ function SearchView(): JSX.Element {
       });
     return () => controller.abort();
   }, [query, page, activeTags, sort]);
+
+  useEffect(() => {
+    const q = historyQuery.trim();
+    if (!q || q === lastRecordedRef.current) return;
+    lastRecordedRef.current = q;
+    onCommit(q, result && result.query === q ? result.kind : 'default');
+  }, [historyQuery, result, onCommit]);
 
   useEffect(() => {
     const q = suggestQuery.trim();
@@ -283,24 +397,27 @@ function SearchView(): JSX.Element {
   }, [suggestions]);
 
   const pickSuggestion = (s: string) => {
-    setInput(s);
+    onInputChange(s);
     setSuggestOpen(false);
     setActiveSuggestion(-1);
   };
 
-  const totalPages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
+  const local = result?.local ?? null;
+  const totalPages = local ? Math.max(1, Math.ceil(local.total / PAGE_SIZE)) : 1;
   const facetTags = useMemo(
     () =>
-      result
-        ? Object.entries(result.facets.tags)
+      local
+        ? Object.entries(local.facets.tags)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 12)
         : [],
-    [result],
+    [local],
   );
 
   const toggleTag = (tag: string) =>
     setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+
+  const hasFilters = (local?.total ?? 0) > 1 || activeTags.length > 0 || facetTags.length > 0;
 
   return (
     <section className="search">
@@ -308,10 +425,10 @@ function SearchView(): JSX.Element {
         <input
           type="search"
           autoFocus
-          placeholder="search the index"
+          placeholder="Search anything…"
           value={input}
           onChange={(event) => {
-            setInput(event.target.value);
+            onInputChange(event.target.value);
             setSuggestOpen(true);
           }}
           onFocus={() => setSuggestOpen(true)}
@@ -349,7 +466,7 @@ function SearchView(): JSX.Element {
           <button
             type="button"
             className="search__clear"
-            onClick={() => setInput('')}
+            onClick={() => onInputChange('')}
             aria-label="Clear search"
           >
             clear
@@ -379,22 +496,9 @@ function SearchView(): JSX.Element {
         )}
       </div>
 
-      {activeTags.length > 0 && (
-        <div className="chips">
-          {activeTags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              className="chip chip--active"
-              onClick={() => toggleTag(tag)}
-            >
-              {tag} ✕
-            </button>
-          ))}
-        </div>
-      )}
-
       {error && <p className="notice notice--error">{error}</p>}
+
+      {result?.primary && <PrimaryCard primary={result.primary} />}
 
       {answersEnabled && answerQuery && !answerRequested && (
         <button type="button" className="answer__cta" onClick={() => runAnswer(answerQuery, false)}>
@@ -414,17 +518,31 @@ function SearchView(): JSX.Element {
         />
       )}
 
-      {result && (
+      {local && (
         <p className="search__meta">
-          <strong>{result.total.toLocaleString()}</strong> result{result.total === 1 ? '' : 's'}
-          {result.query ? ` for “${result.query}”` : ''} · {result.tookMs} ms
+          <strong>{local.total.toLocaleString()}</strong> result{local.total === 1 ? '' : 's'}
+          {local.query ? ` for “${local.query}”` : ''} · {local.tookMs} ms
           {loading && (
             <>
               {' · '}
               <span className="search__updating" aria-hidden /> updating
             </>
           )}
-          {result.total > 1 && (
+          {hasFilters && (
+            <button
+              type="button"
+              className="search__filters-toggle"
+              onClick={() => setFiltersOpen((o) => !o)}
+            >
+              filters {filtersOpen ? '▴' : '▾'}
+            </button>
+          )}
+        </p>
+      )}
+
+      {filtersOpen && hasFilters && (
+        <div className="filters">
+          {local && local.total > 1 && (
             <label className="search__sort">
               sort
               <select value={sort} onChange={(event) => setSort(event.target.value as SearchSort)}>
@@ -436,26 +554,41 @@ function SearchView(): JSX.Element {
               </select>
             </label>
           )}
-        </p>
-      )}
 
-      {facetTags.length > 0 && (
-        <div className="chips chips--facets">
-          {facetTags.map(([tag, count]) => (
-            <button
-              key={tag}
-              type="button"
-              className={activeTags.includes(tag) ? 'chip chip--active' : 'chip'}
-              onClick={() => toggleTag(tag)}
-            >
-              {tag} <span className="chip__count">{count}</span>
-            </button>
-          ))}
+          {activeTags.length > 0 && (
+            <div className="chips">
+              {activeTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className="chip chip--active"
+                  onClick={() => toggleTag(tag)}
+                >
+                  {tag} ✕
+                </button>
+              ))}
+            </div>
+          )}
+
+          {facetTags.length > 0 && (
+            <div className="chips chips--facets">
+              {facetTags.map(([tag, count]) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={activeTags.includes(tag) ? 'chip chip--active' : 'chip'}
+                  onClick={() => toggleTag(tag)}
+                >
+                  {tag} <span className="chip__count">{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       <ol className="results">
-        {result?.hits.map((hit) => (
+        {local?.hits.map((hit) => (
           <li key={hit.id} className="result">
             <h3 className="result__title">
               {hit.url ? (
@@ -486,22 +619,22 @@ function SearchView(): JSX.Element {
         ))}
       </ol>
 
-      {result && result.total === 0 && !loading && (
+      {local && local.total === 0 && !loading && !result?.primary && (
         <div className="empty">
           <Beacon size={150} />
-          <strong>{query ? 'no documents matched' : 'index ready'}</strong>
+          <strong>{query ? 'nothing matched' : 'ready'}</strong>
           <span>
             {query
-              ? 'Nothing in the index matched. Try a different query, or clear the active tag filters.'
-              : 'Type to search, or visit Library to add content.'}
+              ? 'Nothing in the index matched. Try a different query, or clear the active filters.'
+              : 'Type to search — a domain, an IP, a calculation, a plate, or plain text.'}
           </span>
-          {result.suggestion && (
+          {local.suggestion && (
             <button
               type="button"
               className="answer__cta"
-              onClick={() => setInput(result.suggestion!)}
+              onClick={() => onInputChange(local.suggestion!)}
             >
-              ↳ did you mean “{result.suggestion}”?
+              ↳ did you mean “{local.suggestion}”?
             </button>
           )}
           {query && answersEnabled && !answerRequested && (
@@ -515,7 +648,7 @@ function SearchView(): JSX.Element {
         </div>
       )}
 
-      {result && result.total > PAGE_SIZE && (
+      {local && local.total > PAGE_SIZE && (
         <div className="pager">
           <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             ← Previous
@@ -532,6 +665,295 @@ function SearchView(): JSX.Element {
           </button>
         </div>
       )}
+    </section>
+  );
+}
+
+// --- Adaptive result cards ----------------------------------------------------
+// The universal box can return a structured "primary" result shaped like what
+// it actually is, rather than forcing every answer through the same
+// title/url/snippet template.
+
+function PrimaryCard({ primary }: { primary: PrimaryResult }): JSX.Element {
+  switch (primary.kind) {
+    case 'domain':
+      return <DomainCard primary={primary} />;
+    case 'ip':
+      return <IpCard primary={primary} />;
+    case 'calculation':
+      return <CalculationCard primary={primary} />;
+    case 'plate':
+      return (
+        <section className="primary-card primary-card--plate">
+          <PlateReport report={primary.data} />
+        </section>
+      );
+  }
+}
+
+function DomainCard({ primary }: { primary: DomainPrimary }): JSX.Element {
+  const data = primary.data;
+  return (
+    <section className="primary-card primary-card--domain">
+      <div className="primary-card__head">
+        <span className="primary-card__tag">DOMAIN</span>
+        <strong className="primary-card__title">{primary.domain}</strong>
+      </div>
+      {!primary.enabled && (
+        <p className="notice">
+          Domain lookups are disabled on this server (<code>BEACON_LOOKUPS_ENABLED=false</code>).
+        </p>
+      )}
+      {data && (
+        <>
+          <dl className="kv">
+            {data.addresses.length > 0 && (
+              <div>
+                <dt>IPv4</dt>
+                <dd>{data.addresses.join(', ')}</dd>
+              </div>
+            )}
+            {data.ipv6Addresses.length > 0 && (
+              <div>
+                <dt>IPv6</dt>
+                <dd>{data.ipv6Addresses.join(', ')}</dd>
+              </div>
+            )}
+            {data.nameservers.length > 0 && (
+              <div>
+                <dt>Nameservers</dt>
+                <dd>{data.nameservers.join(', ')}</dd>
+              </div>
+            )}
+            {data.mailExchanges.length > 0 && (
+              <div>
+                <dt>Mail (MX)</dt>
+                <dd>{data.mailExchanges.join(', ')}</dd>
+              </div>
+            )}
+            {data.registrar && (
+              <div>
+                <dt>Registrar</dt>
+                <dd>{data.registrar}</dd>
+              </div>
+            )}
+            {data.createdDate && (
+              <div>
+                <dt>Registered</dt>
+                <dd>{data.createdDate.slice(0, 10)}</dd>
+              </div>
+            )}
+            {data.expiresDate && (
+              <div>
+                <dt>Expires</dt>
+                <dd>{data.expiresDate.slice(0, 10)}</dd>
+              </div>
+            )}
+          </dl>
+          {data.notices.length > 0 && (
+            <ul className="primary-card__notices">
+              {data.notices.map((notice, i) => (
+                <li key={i}>{notice}</li>
+              ))}
+            </ul>
+          )}
+          <p className="primary-card__sources">Sources: DNS · RDAP</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
+  const data = primary.data;
+  return (
+    <section className="primary-card primary-card--ip">
+      <div className="primary-card__head">
+        <span className="primary-card__tag">IP ADDRESS</span>
+        <strong className="primary-card__title">{primary.ip}</strong>
+      </div>
+      {!primary.enabled && (
+        <p className="notice">
+          IP lookups are disabled on this server (<code>BEACON_LOOKUPS_ENABLED=false</code>).
+        </p>
+      )}
+      {data && (
+        <>
+          <dl className="kv">
+            {data.organization && (
+              <div>
+                <dt>Organization</dt>
+                <dd>{data.organization}</dd>
+              </div>
+            )}
+            {data.network && (
+              <div>
+                <dt>Network</dt>
+                <dd>{data.network}</dd>
+              </div>
+            )}
+            {data.country && (
+              <div>
+                <dt>Country</dt>
+                <dd>{data.country}</dd>
+              </div>
+            )}
+            {data.reverseDns.length > 0 && (
+              <div>
+                <dt>Reverse DNS</dt>
+                <dd>{data.reverseDns.join(', ')}</dd>
+              </div>
+            )}
+            {data.rdapHandle && (
+              <div>
+                <dt>RDAP handle</dt>
+                <dd>{data.rdapHandle}</dd>
+              </div>
+            )}
+          </dl>
+          {data.notices.length > 0 && (
+            <ul className="primary-card__notices">
+              {data.notices.map((notice, i) => (
+                <li key={i}>{notice}</li>
+              ))}
+            </ul>
+          )}
+          <p className="primary-card__sources">Sources: Reverse DNS · RDAP</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CalculationCard({ primary }: { primary: CalculationPrimary }): JSX.Element {
+  return (
+    <section className="primary-card primary-card--calculation">
+      <div className="primary-card__head">
+        <span className="primary-card__tag">CALCULATION</span>
+      </div>
+      {primary.error ? (
+        <p className="notice notice--error">{primary.error}</p>
+      ) : (
+        <p className="primary-card__result">
+          {primary.expression} = <strong>{primary.result}</strong>
+        </p>
+      )}
+    </section>
+  );
+}
+
+// --- History -------------------------------------------------------------
+
+function HistoryView({
+  entries,
+  onPick,
+  onClear,
+}: {
+  entries: HistoryEntry[];
+  onPick: (query: string) => void;
+  onClear: () => void;
+}): JSX.Element {
+  return (
+    <section className="history">
+      <div className="history__actions">
+        <p className="notice">Recent queries, stored locally in this browser.</p>
+        {entries.length > 0 && (
+          <button type="button" className="btn btn--danger" onClick={onClear}>
+            clear history
+          </button>
+        )}
+      </div>
+
+      {entries.length > 0 ? (
+        <ul className="history__list">
+          {entries.map((entry, i) => (
+            <li key={`${entry.query}-${i}`} className="history__row">
+              <button type="button" className="history__query" onClick={() => onPick(entry.query)}>
+                {entry.query}
+              </button>
+              <span className="history__kind">{KIND_LABEL[entry.kind]}</span>
+              <span className="history__time">{relativeTime(entry.at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="empty">
+          <Beacon size={120} />
+          <strong>no history yet</strong>
+          <span>Queries you run will show up here.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// --- Sources (connected capabilities + document management) -----------------
+
+function SourcesView({
+  stats,
+  health,
+  onDone,
+}: {
+  stats: IndexStats | null;
+  health: HealthResponse | null;
+  onDone: () => void;
+}): JSX.Element {
+  const dot = (on: boolean) => (on ? 'sources__dot sources__dot--on' : 'sources__dot');
+
+  return (
+    <section className="sources">
+      <section className="sources__overview">
+        <h2>Connected sources</h2>
+        <ul className="sources__list">
+          <li>
+            <span className={dot(true)} aria-hidden />
+            Local full-text index
+            <span className="sources__detail">
+              {stats ? `${stats.documents.toLocaleString()} documents` : '—'}
+            </span>
+          </li>
+          <li>
+            <span className={dot(true)} aria-hidden />
+            Web crawler
+            <span className="sources__detail">fetch &amp; index pages on demand</span>
+          </li>
+          <li>
+            <span className={dot(Boolean(health?.lookups.enabled))} aria-hidden />
+            Domain / IP lookups (DNS + RDAP)
+            <span className="sources__detail">
+              {health ? (health.lookups.enabled ? 'enabled' : 'disabled') : '—'}
+            </span>
+          </li>
+          <li>
+            <span className={dot(Boolean(health?.plateChecks.vehicleData))} aria-hidden />
+            DVLA vehicle data
+            <span className="sources__detail">
+              {health ? (health.plateChecks.vehicleData ? 'configured' : 'not configured') : '—'}
+            </span>
+          </li>
+          <li>
+            <span className={dot(Boolean(health?.plateChecks.motHistory))} aria-hidden />
+            DVSA MOT history
+            <span className="sources__detail">
+              {health ? (health.plateChecks.motHistory ? 'configured' : 'not configured') : '—'}
+            </span>
+          </li>
+          <li>
+            <span className={dot(Boolean(health?.answer.webSearch))} aria-hidden />
+            Answer web search
+            <span className="sources__detail">{health?.answer.webSearch ?? 'not configured'}</span>
+          </li>
+          <li>
+            <span className={dot(Boolean(health && health.answer.llm.length > 0))} aria-hidden />
+            Answer writer (LLM)
+            <span className="sources__detail">
+              {health && health.answer.llm.length > 0 ? health.answer.llm.join(', ') : 'extractive only'}
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <LibraryView onDone={onDone} />
     </section>
   );
 }
@@ -595,6 +1017,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
 
   return (
     <section className="library">
+      <h2>Indexed documents</h2>
       <div className="library__actions">
         <button
           type="button"
@@ -962,6 +1385,100 @@ const STATUS_ICON: Record<string, string> = {
   skipped: '[skip]',
 };
 
+/** The plate-check report, shared by the advanced Settings tool and the universal box's plate card. */
+function PlateReport({ report }: { report: PlateCheck }): JSX.Element {
+  const badgeClass =
+    report.summary.status === 'ok'
+      ? 'badge badge--ok'
+      : report.summary.status === 'attention'
+        ? 'badge badge--warn'
+        : 'badge badge--fail';
+
+  return (
+    <div className="plate__report">
+      <div className="plate__headline">
+        <span className={badgeClass}>{report.summary.status}</span>
+        <div>
+          <strong className="plate__mark">{report.formatted}</strong>
+          <span className="plate__desc">{report.summary.headline}</span>
+        </div>
+      </div>
+
+      <dl className="plate__facts">
+        <div>
+          <dt>Format</dt>
+          <dd>{report.format}</dd>
+        </div>
+        {report.age && (
+          <div>
+            <dt>Age</dt>
+            <dd>
+              {report.age.description} (~{report.age.ageYears} yrs)
+            </dd>
+          </div>
+        )}
+        {report.region && (
+          <div>
+            <dt>Region</dt>
+            <dd>
+              {report.region.office}, {report.region.region} ({report.region.country})
+            </dd>
+          </div>
+        )}
+        {report.vehicle && (
+          <div>
+            <dt>Vehicle</dt>
+            <dd>
+              {[
+                report.vehicle.colour,
+                report.vehicle.make,
+                report.vehicle.fuelType,
+                report.vehicle.yearOfManufacture,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      <ul className="checks">
+        {report.checks.map((check) => (
+          <li key={check.id} className={`checks__item checks__item--${check.status}`}>
+            <span className="checks__icon" aria-hidden>
+              {STATUS_ICON[check.status] ?? '[ -- ]'}
+            </span>
+            <span className="checks__label">{check.label}</span>
+            <span className="checks__detail">{check.detail}</span>
+          </li>
+        ))}
+      </ul>
+
+      {report.mot && report.mot.tests.length > 0 && (
+        <details className="plate__mot">
+          <summary>
+            MOT history — {report.mot.totalTests} tests ({report.mot.passed} passed,{' '}
+            {report.mot.failed} failed)
+          </summary>
+          <ul>
+            {report.mot.tests.slice(0, 12).map((test, i) => (
+              <li key={test.motTestNumber ?? i}>
+                {test.completedDate?.slice(0, 10)} — <strong>{test.testResult}</strong>
+                {typeof test.odometerValue === 'number'
+                  ? ` · ${test.odometerValue.toLocaleString()} ${test.odometerUnit ?? ''}`
+                  : ''}
+                {test.defects.length > 0 ? ` · ${test.defects.length} defect(s)` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <p className="plate__sources">Sources: {report.sources.join(', ')}</p>
+    </div>
+  );
+}
+
 function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
   const [input, setInput] = useState('');
   const [vehicle, setVehicle] = useState(true);
@@ -984,13 +1501,6 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Check failed'))
       .finally(() => setBusy(false));
   };
-
-  const badgeClass =
-    report?.summary.status === 'ok'
-      ? 'badge badge--ok'
-      : report?.summary.status === 'attention'
-        ? 'badge badge--warn'
-        : 'badge badge--fail';
 
   return (
     <section className="plate">
@@ -1025,89 +1535,7 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
 
       {error && <p className="notice notice--error">{error}</p>}
 
-      {report && (
-        <div className="plate__report">
-          <div className="plate__headline">
-            <span className={badgeClass}>{report.summary.status}</span>
-            <div>
-              <strong className="plate__mark">{report.formatted}</strong>
-              <span className="plate__desc">{report.summary.headline}</span>
-            </div>
-          </div>
-
-          <dl className="plate__facts">
-            <div>
-              <dt>Format</dt>
-              <dd>{report.format}</dd>
-            </div>
-            {report.age && (
-              <div>
-                <dt>Age</dt>
-                <dd>
-                  {report.age.description} (~{report.age.ageYears} yrs)
-                </dd>
-              </div>
-            )}
-            {report.region && (
-              <div>
-                <dt>Region</dt>
-                <dd>
-                  {report.region.office}, {report.region.region} ({report.region.country})
-                </dd>
-              </div>
-            )}
-            {report.vehicle && (
-              <div>
-                <dt>Vehicle</dt>
-                <dd>
-                  {[
-                    report.vehicle.colour,
-                    report.vehicle.make,
-                    report.vehicle.fuelType,
-                    report.vehicle.yearOfManufacture,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </dd>
-              </div>
-            )}
-          </dl>
-
-          <ul className="checks">
-            {report.checks.map((check) => (
-              <li key={check.id} className={`checks__item checks__item--${check.status}`}>
-                <span className="checks__icon" aria-hidden>
-                  {STATUS_ICON[check.status] ?? '[ -- ]'}
-                </span>
-                <span className="checks__label">{check.label}</span>
-                <span className="checks__detail">{check.detail}</span>
-              </li>
-            ))}
-          </ul>
-
-          {report.mot && report.mot.tests.length > 0 && (
-            <details className="plate__mot">
-              <summary>
-                MOT history — {report.mot.totalTests} tests ({report.mot.passed} passed,{' '}
-                {report.mot.failed} failed)
-              </summary>
-              <ul>
-                {report.mot.tests.slice(0, 12).map((test, i) => (
-                  <li key={test.motTestNumber ?? i}>
-                    {test.completedDate?.slice(0, 10)} — <strong>{test.testResult}</strong>
-                    {typeof test.odometerValue === 'number'
-                      ? ` · ${test.odometerValue.toLocaleString()} ${test.odometerUnit ?? ''}`
-                      : ''}
-                    {test.defects.length > 0 ? ` · ${test.defects.length} defect(s)` : ''}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-
-          <p className="plate__sources">Sources: {report.sources.join(', ')}</p>
-        </div>
-      )}
+      {report && <PlateReport report={report} />}
     </section>
   );
 }
@@ -1119,12 +1547,26 @@ function AboutView(): JSX.Element {
       <p>
         Beacon Search is a small, dependency-light search engine you can run anywhere Node.js runs.
         It keeps a full-text index in memory (powered by MiniSearch) and persists it to a single
-        JSON file — no database, no external services.
+        JSON file — no database, no external services required for the core index.
+      </p>
+      <h3>The universal box</h3>
+      <p>
+        The <em>Search</em> tab is a single input. Alongside the usual local-index search, Beacon
+        classifies what you typed and — when it recognises the shape — attaches a structured
+        result: a bare domain resolves DNS + RDAP registration data, an IP resolves reverse DNS +
+        RDAP network data, an arithmetic expression is evaluated directly, and <code>plate &lt;reg&gt;</code>{' '}
+        runs the number plate checker. Everything else is just a search. Domain/IP lookups need no
+        API key (DNS and RDAP are open internet infrastructure) but can be turned off entirely with{' '}
+        <code>BEACON_LOOKUPS_ENABLED=false</code> for a fully offline deployment.
       </p>
       <h3>API</h3>
       <ul>
         <li>
           <code>GET /api/search?q=…&amp;tags=…&amp;limit=…&amp;offset=…</code>
+        </li>
+        <li>
+          <code>GET /api/query?q=…</code> — same params as <code>/api/search</code>, plus the
+          classified <code>primary</code> result
         </li>
         <li>
           <code>GET /api/documents</code> · <code>GET /api/documents/:id</code>
@@ -1146,21 +1588,23 @@ function AboutView(): JSX.Element {
       </ul>
       <h3>Answers</h3>
       <p>
-        For question-like queries the <em>Search</em> tab also weaves a short written answer. It is
-        built only from retrieved material — pages in the index plus, when a web-search provider is
-        configured, live pages fetched at query time through the same robots / SSRF-guarded stack
-        the crawler uses. Every sentence is tied to a numbered source; each source carries a trust
-        tier (official / established / unverified reliability) and a fetch or index timestamp.
-        Anything the sources do not support is labelled <em>unverified</em>, and a confidence banner
-        summarises how well-grounded the answer is. With no LLM configured the answer is a
-        deterministic weave of source extracts; with <code>ANTHROPIC_API_KEY</code> (or an
-        OpenAI-compatible endpoint) it is written up in prose. All of it is optional.
+        For question-like queries (and for a bare email address or a quoted name) the <em>Search</em>{' '}
+        tab also weaves a short written answer. It is built only from retrieved material — pages in
+        the index plus, when a web-search provider is configured, live pages fetched at query time
+        through the same robots / SSRF-guarded stack the crawler uses. Every sentence is tied to a
+        numbered source; each source carries a trust tier (official / established / unverified
+        reliability) and a fetch or index timestamp. Anything the sources do not support is labelled{' '}
+        <em>unverified</em>, and a confidence banner summarises how well-grounded the answer is. With
+        no LLM configured the answer is a deterministic weave of source extracts; with{' '}
+        <code>ANTHROPIC_API_KEY</code> (or an OpenAI-compatible endpoint) it is written up in prose.
+        All of it is optional.
       </p>
       <h3>Number plate checker</h3>
       <p>
-        The plate checker (above) runs automatic checks on a UK registration: format validation,
-        age identifier, DVLA region, and — when API keys are configured — DVLA tax/MOT status and
-        DVSA MOT history. Offline checks need no credentials.
+        Typing <code>plate AB12CDE</code> into the universal box runs the offline checks (format,
+        age identifier, DVLA region) inline. The advanced tool in Settings adds DVLA tax/MOT status
+        and DVSA MOT history lookups when API keys are configured. Offline checks need no
+        credentials.
       </p>
       <h3>CLI &amp; MCP</h3>
       <p>
@@ -1172,16 +1616,13 @@ function AboutView(): JSX.Element {
   );
 }
 
-function SettingsView({ stats }: { stats: IndexStats | null }): JSX.Element {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-
-  useEffect(() => {
-    api
-      .health()
-      .then(setHealth)
-      .catch(() => setHealth(null));
-  }, []);
-
+function SettingsView({
+  stats,
+  health,
+}: {
+  stats: IndexStats | null;
+  health: HealthResponse | null;
+}): JSX.Element {
   const answerStatus = health
     ? health.answer.enabled
       ? health.answer.llm.length > 0
@@ -1201,9 +1642,7 @@ function SettingsView({ stats }: { stats: IndexStats | null }): JSX.Element {
           </div>
           <div>
             <dt>Tags / sources</dt>
-            <dd>
-              {stats ? `${stats.tags} / ${stats.sources}` : '—'}
-            </dd>
+            <dd>{stats ? `${stats.tags} / ${stats.sources}` : '—'}</dd>
           </div>
           <div>
             <dt>Uptime</dt>
@@ -1218,6 +1657,10 @@ function SettingsView({ stats }: { stats: IndexStats | null }): JSX.Element {
             <dd>{health?.answer.webSearch ?? 'none configured'}</dd>
           </div>
           <div>
+            <dt>Domain / IP lookups</dt>
+            <dd>{health ? (health.lookups.enabled ? 'enabled' : 'disabled') : '—'}</dd>
+          </div>
+          <div>
             <dt>DVLA vehicle data</dt>
             <dd>{health ? (health.plateChecks.vehicleData ? 'configured' : 'not configured') : '—'}</dd>
           </div>
@@ -1229,7 +1672,7 @@ function SettingsView({ stats }: { stats: IndexStats | null }): JSX.Element {
       </section>
 
       <details className="settings__tool">
-        <summary>Number plate checker</summary>
+        <summary>Number plate checker (advanced)</summary>
         <PlateView onDone={() => {}} />
       </details>
 
