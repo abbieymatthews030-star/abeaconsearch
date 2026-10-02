@@ -49,7 +49,11 @@ export function extractReadable(
   tags: string[] = [],
 ): DocumentInput | null {
   const $ = cheerio.load(html);
-  $('script, style, noscript, template, svg, iframe').remove();
+  // `nav`/`header`/`footer`/`aside` are page chrome by HTML-spec definition,
+  // not content — strip them wherever they sit (not just outside <main>,
+  // since plenty of real pages — Wikipedia included — nest site nav/language
+  // pickers inside their main content column).
+  $('script, style, noscript, template, svg, iframe, nav, header, footer, aside').remove();
   // Ensure block-level elements are separated by whitespace in the text dump.
   $('h1, h2, h3, h4, h5, h6, p, li, br, div, section, article, header, footer, tr, td, th').append(
     ' ',

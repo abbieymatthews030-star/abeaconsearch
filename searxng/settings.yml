@@ -1,0 +1,19 @@
+# Minimal SearXNG config for the bundled docker-compose stack.
+# `use_default_settings: true` merges this with SearXNG's own defaults (170+
+# search engines), so only the bits Beacon actually needs are overridden here.
+use_default_settings: true
+
+general:
+  instance_name: 'beacon-searxng'
+
+server:
+  # Only reachable from the `beacon` container over the compose network, not
+  # published to the host — so this secret mainly matters if you later expose
+  # SearXNG's own port directly. Regenerate with: openssl rand -hex 32
+  secret_key: 'change-me-with-openssl-rand-hex-32'
+  limiter: false
+
+search:
+  formats:
+    - html
+    - json

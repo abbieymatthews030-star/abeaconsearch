@@ -7,8 +7,39 @@ services:
     environment:
       BEACON_LOG_LEVEL: info
       BEACON_CRAWL_MAX_PAGES: '100'
+      # Answer-weave's web search, backed by the self-hosted SearXNG below —
+      # a fully open-source meta-search engine, no API key required. Unset
+      # BEACON_ANSWER_WEB_SEARCH (or remove the searxng service) to run
+      # index-only, or point SEARXNG_URL at your own instance instead.
+      BEACON_ANSWER_WEB_SEARCH: searxng
+      SEARXNG_URL: http://searxng:8080
     volumes:
       - beacon-data:/data
+    depends_on:
+      searxng:
+        condition: service_healthy
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    # Not published to the host — only `beacon` talks to it, over the
+    # compose network. Publish 8080 yourself if you also want its own UI.
+    expose:
+      - '8080'
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
 
 volumes:

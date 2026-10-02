@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { createAnswerService } from '../core/answer/index.js';
@@ -54,6 +55,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   registerErrorHandler(app);
   await app.register(cors, { origin: config.corsOrigin });
+
+  if (config.rateLimit.max > 0) {
+    await app.register(rateLimit, {
+      max: config.rateLimit.max,
+      timeWindow: config.rateLimit.windowMs,
+    });
+  }
 
   const ctx: RouteContext = {
     config,

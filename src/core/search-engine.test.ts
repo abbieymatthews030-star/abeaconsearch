@@ -73,6 +73,22 @@ describe('SearchEngine', () => {
     expect(res.hits.map((h) => h.id)).toContain('c');
   });
 
+  it('falls back to OR when an AND query with multiple terms matches nothing', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    // "xenomorph" matches no document, so a strict AND would return nothing —
+    // the partial match on "crawler" should still surface.
+    const res = engine.search(q({ q: 'crawler xenomorph' }));
+    expect(res.hits.map((h) => h.id)).toContain('b');
+  });
+
+  it('does not fall back to OR for a single-term query (nothing to partially match)', () => {
+    const engine = new SearchEngine();
+    seed(engine);
+    const res = engine.search(q({ q: 'xenomorph' }));
+    expect(res.total).toBe(0);
+  });
+
   it('filters by tag', () => {
     const engine = new SearchEngine();
     seed(engine);

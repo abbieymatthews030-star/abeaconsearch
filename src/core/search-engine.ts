@@ -141,15 +141,13 @@ export class SearchEngine {
 
     let ranked: Array<{ doc: BeaconDocument; score: number; terms: string[] }>;
 
-    if (q.length === 0) {
-      ranked = this.list().map((doc) => ({ doc, score: 0, terms: [] }));
-    } else {
-      ranked = this.mini
+    const runMiniSearch = (combineWith: 'AND' | 'OR') =>
+      this.mini
         .search(q, {
           prefix: query.prefix,
           fuzzy: query.fuzzy ? 0.2 : false,
           boost: { title: 3, tags: 2 },
-          combineWith: options.combineWith ?? 'AND',
+          combineWith,
         })
         .map((result) => {
           const doc = this.docs.get(String(result.id));
@@ -158,6 +156,17 @@ export class SearchEngine {
           return { doc, score: result.score, terms };
         })
         .filter((v): v is { doc: BeaconDocument; score: number; terms: string[] } => v !== null);
+
+    if (q.length === 0) {
+      ranked = this.list().map((doc) => ({ doc, score: 0, terms: [] }));
+    } else {
+      const requested = options.combineWith ?? 'AND';
+      ranked = runMiniSearch(requested);
+      // A multi-word AND query with no exact match still has something to
+      // say: fall back to OR so a partial match outranks "nothing found".
+      if (ranked.length === 0 && requested === 'AND' && queryTerms.length > 1) {
+        ranked = runMiniSearch('OR');
+      }
     }
 
     const filtered = ranked.filter(({ doc }) => {

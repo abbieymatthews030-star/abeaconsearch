@@ -20,6 +20,13 @@ export interface Config {
   plate: PlateConfig;
   answer: AnswerConfig;
   lookups: LookupsConfig;
+  rateLimit: RateLimitConfig;
+}
+
+export interface RateLimitConfig {
+  /** Max requests per IP per window on /api/*. 0 disables rate limiting entirely. */
+  max: number;
+  windowMs: number;
 }
 
 export interface LookupsConfig {
@@ -102,10 +109,12 @@ function readOptional(name: string): string | undefined {
   return raw === undefined || raw.trim() === '' ? undefined : raw.trim();
 }
 
-export interface ConfigOverrides extends Partial<Omit<Config, 'plate' | 'answer' | 'lookups'>> {
+export interface ConfigOverrides
+  extends Partial<Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit'>> {
   plate?: Partial<PlateConfig>;
   answer?: Partial<AnswerConfig>;
   lookups?: Partial<LookupsConfig>;
+  rateLimit?: Partial<RateLimitConfig>;
 }
 
 const WEB_SEARCH_PROVIDERS = ['brave', 'tavily', 'searxng'] as const;
@@ -192,15 +201,21 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       enabled: readBool('BEACON_LOOKUPS_ENABLED', true),
       timeoutMs: readInt('BEACON_LOOKUPS_TIMEOUT_MS', 8_000),
     },
+    rateLimit: {
+      max: readInt('BEACON_RATE_LIMIT_MAX', 200),
+      windowMs: readInt('BEACON_RATE_LIMIT_WINDOW_MS', 60_000),
+    },
   };
 
-  // `plate` / `answer` / `lookups` are merged rather than replaced so callers
-  // can override a single nested field without restating the whole sub-config.
+  // `plate` / `answer` / `lookups` / `rateLimit` are merged rather than
+  // replaced so callers can override a single nested field without restating
+  // the whole sub-config.
   return {
     ...base,
     ...overrides,
     plate: { ...base.plate, ...overrides.plate },
     answer: { ...base.answer, ...overrides.answer },
     lookups: { ...base.lookups, ...overrides.lookups },
+    rateLimit: { ...base.rateLimit, ...overrides.rateLimit },
   };
 }

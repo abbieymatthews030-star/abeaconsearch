@@ -32,6 +32,18 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // A single unhandled rejection or stray exception should not silently
+  // kill — or silently limp along in — a long-running server. Log it with
+  // full context either way; exit only when the process state is no longer
+  // trustworthy (a synchronous throw outside any handler).
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason }, 'unhandled promise rejection');
+  });
+  process.on('uncaughtException', (error) => {
+    logger.error({ err: error }, 'uncaught exception — shutting down');
+    shutdown('uncaughtException');
+  });
 }
 
 main().catch((error: unknown) => {

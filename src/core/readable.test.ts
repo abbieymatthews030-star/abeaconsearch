@@ -17,6 +17,22 @@ describe('extractReadable', () => {
     expect(doc?.tags).toEqual(['t']);
   });
 
+  it('strips nav/header/footer/aside even when nested inside <main>', () => {
+    const doc = extractReadable(
+      `<html><head><title>Doc Title</title></head><body>
+        <main>
+          <header>Site Header</header>
+          <nav>Language: EN FR DE</nav>
+          <h1>Heading</h1><p>Real content.</p>
+          <aside>Related links</aside>
+          <footer>Copyright 2026</footer>
+        </main>
+      </body></html>`,
+      'https://example.test/page',
+    );
+    expect(doc?.body).toBe('Heading Real content.');
+  });
+
   it('returns null when there is no title and no body', () => {
     expect(
       extractReadable('<html><body><main></main></body></html>', 'https://x.test/'),
