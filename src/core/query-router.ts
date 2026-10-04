@@ -2,7 +2,7 @@ import { isIP } from 'node:net';
 import type { DomainLookup } from './lookups/domain.js';
 import type { IpLookup } from './lookups/ip.js';
 import type { PlateCheck } from './plate/types.js';
-import type { SearchResponse } from './types.js';
+import type { SearchEnvelope } from './search/types.js';
 
 export type QueryKind = 'domain' | 'ip' | 'calculation' | 'plate' | 'default';
 
@@ -64,9 +64,7 @@ export interface PlatePrimary {
 
 export type PrimaryResult = DomainPrimary | IpPrimary | CalculationPrimary | PlatePrimary;
 
-export interface UniversalQueryResponse {
-  query: string;
+export interface UniversalQueryResponse extends SearchEnvelope {
   kind: QueryKind;
   primary: PrimaryResult | null;
-  local: SearchResponse;
 }

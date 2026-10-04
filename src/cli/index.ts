@@ -173,6 +173,7 @@ program
       fuzzy: true,
       prefix: true,
       sort: 'relevance',
+      allowPartialMatch: true,
     });
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);

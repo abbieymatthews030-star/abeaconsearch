@@ -22,12 +22,16 @@ export interface LlmSynthesizer {
 }
 
 export const SYNTHESIS_SYSTEM_PROMPT = [
-  'You write a short, accurate answer to the user question using ONLY the numbered extracts provided.',
+  "You are ABEACON's evidence-synthesis engine. The extracts below have already been filtered for relevance, content quality, and (for person/entity queries) confirmed identity match — boilerplate, navigation text, off-topic pages, and sources that only coincidentally share a word with the query have already been removed. Your job is to determine what can actually be established from what remains, not to summarize or repeat everything you're handed.",
+  'Write a short, accurate answer to the question using ONLY the numbered extracts provided.',
   'Rules:',
   '- Every sentence must end with the bracketed number(s) of the extract(s) that support it, e.g. "Water boils at 100C at sea level [2].".',
-  '- Never state anything that is not directly supported by an extract. Do not use outside knowledge.',
+  '- Never state anything not directly supported by an extract. Do not use outside knowledge, and never fill a gap with a plausible-sounding guess.',
+  '- Never imply that two extracts describe the same person, place, or thing unless an extract itself says so — matching topics or keywords is not identity evidence.',
+  '- Never convert uncertainty into certainty, and never treat the absence of a detail in the extracts as evidence that it is false.',
+  '- If the extracts disagree with each other, say so explicitly in the answer rather than silently picking a side.',
   '- If the extracts do not contain the answer, reply with exactly: The available sources do not answer this question.',
-  '- Be concise: at most 5 sentences. No preamble, no headings, no bullet points.',
+  '- Be concise: at most 5 sentences. No preamble, no headings, no bullet points, and no quoting extract text beyond what a normal cited sentence needs.',
 ].join('\n');
 
 function buildUserMessage(input: SynthesisInput): string {
@@ -158,8 +162,13 @@ export function createLlmSynthesizers(
   config: AnswerConfig,
   fetchImpl?: typeof fetch,
 ): LlmSynthesizer[] {
-  return [
+  const configured = [
     new AnthropicSynthesizer(config, fetchImpl),
     new OpenAiCompatibleSynthesizer(config, fetchImpl),
   ].filter((s) => s.configured);
+  if (!config.preferredLlm) return configured;
+  const preferredKind: Synthesizer = `llm-${config.preferredLlm}`;
+  return [...configured].sort((a, b) =>
+    a.kind === preferredKind ? -1 : b.kind === preferredKind ? 1 : 0,
+  );
 }

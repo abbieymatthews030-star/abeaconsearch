@@ -9,10 +9,14 @@ import type { BeaconDocument, SearchQuery, SearchResponse } from '../types.js';
 import { searchQuerySchema } from '../types.js';
 import { classifyTrust } from './trust.js';
 import type { TrustTier } from './types.js';
+import { evaluateSource, stripLeadingNavList, type SourceEvidence } from './evidence.js';
 import type { WebSearchProvider } from './providers/web-search.js';
+import { fanOutWebSearch, type WebBackend } from '../search/fanout.js';
+import { detectIntent } from '../search/intent.js';
+import { isRelevantLocalHit } from '../search/relevance.js';
 
 /** A source gathered for answering, with its full body text for extraction. */
-export interface RetrievedSource {
+export interface RetrievedSource extends SourceEvidence {
   id: number;
   title: string;
   url?: string;
@@ -34,7 +38,7 @@ export interface EngineLike {
 
 export interface GatherDeps {
   engine: EngineLike;
-  webSearch: WebSearchProvider | null;
+  webSearch: readonly WebSearchProvider[] | null;
   config: AnswerConfig;
   userAgent: string;
   fetchImpl?: typeof fetch;
@@ -67,6 +71,25 @@ function canonicalUrl(url: string): string {
   }
 }
 
+// Common cross-site tracking params worth stripping from a URL before it's
+// shown or cited — marketing UTM tags and the per-vendor click-id params.
+const TRACKING_PARAMS = [
+  /^utm_/i,
+  /^(fbclid|gclid|msclkid|dclid|twclid|igshid|mc_eid|mc_cid|yclid|_ga|_gl)$/i,
+];
+
+function stripTrackingParams(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.some((re) => re.test(key))) u.searchParams.delete(key);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 function domainOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
@@ -81,11 +104,13 @@ function fromIndex(query: string, deps: GatherDeps, limit: number): RetrievedSou
   // OR-combine: a natural-language question ("where do penguins live") rarely has
   // every token in one document. Relevance is re-checked when grounding claims.
   const response = deps.engine.search(parsed, { combineWith: 'OR' });
+  const intent = detectIntent(query);
   const out: RetrievedSource[] = [];
   for (const hit of response.hits) {
     const doc = deps.engine.get(hit.id);
     if (!doc) continue;
-    const text = normalizeWhitespace(doc.body).slice(0, MAX_SOURCE_CHARS);
+    if (!isRelevantLocalHit(query, doc, { fuzzy: true, prefix: true, intent })) continue;
+    const text = stripLeadingNavList(normalizeWhitespace(doc.body)).slice(0, MAX_SOURCE_CHARS);
     if (!text) continue;
     const trust = classifyTrust(doc.url, 'index', deps.config.trustedDomains);
     out.push({
@@ -99,12 +124,14 @@ function fromIndex(query: string, deps: GatherDeps, limit: number): RetrievedSou
       live: false,
       retrievedAt: doc.updatedAt,
       text,
+      ...evaluateSource(query, doc.title, text, trust.tier),
     });
   }
   return out;
 }
 
 async function fetchWebPage(
+  query: string,
   result: { title: string; url: string; snippet?: string },
   deps: GatherDeps,
   robotsCache: Map<string, RobotsRules>,
@@ -141,21 +168,29 @@ async function fetchWebPage(
   if ('error' in fetched) return { error: fetched.error, url: result.url };
 
   const readable = extractReadable(fetched.html, fetched.finalUrl);
-  const text = normalizeWhitespace(readable?.body ?? '').slice(0, MAX_SOURCE_CHARS);
+  const text = stripLeadingNavList(normalizeWhitespace(readable?.body ?? '')).slice(
+    0,
+    MAX_SOURCE_CHARS,
+  );
   if (!text) return { error: 'no extractable content', url: result.url };
 
   const trust = classifyTrust(fetched.finalUrl, 'web', config.trustedDomains);
+  const citedUrl = config.stripTrackingParams
+    ? stripTrackingParams(fetched.finalUrl)
+    : fetched.finalUrl;
+  const title = readable?.title || result.title || fetched.finalUrl;
   return {
     id: 0,
-    title: readable?.title || result.title || fetched.finalUrl,
-    url: fetched.finalUrl,
+    title,
+    url: citedUrl,
     origin: 'web',
-    domain: domainOf(fetched.finalUrl),
+    domain: domainOf(citedUrl),
     trust: trust.tier,
     trustReason: trust.reason,
     live: true,
     retrievedAt: new Date().toISOString(),
     text,
+    ...evaluateSource(query, title, text, trust.tier),
   };
 }
 
@@ -171,14 +206,41 @@ export async function gatherSources(query: string, deps: GatherDeps): Promise<Ga
   const indexSources = fromIndex(query, deps, Math.max(3, Math.ceil(config.maxSources / 2)));
 
   let webSources: RetrievedSource[] = [];
-  if (!deps.webSearch) {
-    warnings.push('web search is not configured — answering from the local index only');
+  const providers = deps.webSearch ?? [];
+  if (providers.length === 0) {
+    warnings.push(
+      'web search is not configured — set BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, or SEARXNG_URL. Keyless DuckDuckGo and Wikipedia are off (BEACON_KEYLESS_WEB_SEARCH). Answering from the local index only',
+    );
   } else {
     try {
-      const results = await deps.webSearch.search(query, config.maxSources, deps.signal);
+      // Overfetch candidates: a page can be unreachable, robots-blocked, or
+      // empty, and simply asking for exactly `maxSources` means any of those
+      // silently shrinks the result count. Asking for more up front — capped
+      // at what search providers return per page anyway — gives the later
+      // trust-ranked selection a real pool to pick the best sources from
+      // instead of whatever arbitrary subset happened to succeed.
+      const requested = Math.min(config.maxSources * 3, 20);
+      const backends: WebBackend[] = providers.map((provider) => ({
+        id: provider.name.toLowerCase().replace(/\s+/g, '-'),
+        label: provider.name,
+        missingEnv: [],
+        provider,
+      }));
+      const fan = await fanOutWebSearch({
+        backends,
+        query,
+        intent: detectIntent(query),
+        limit: requested,
+        signal: deps.signal,
+        filter: 'off',
+      });
+      for (const attempt of fan.attempts) {
+        if (attempt.status === 'error') warnings.push(`${attempt.label} failed: ${attempt.detail}`);
+      }
+      const results = fan.results;
       const robotsCache = new Map<string, RobotsRules>();
       const settled = await Promise.all(
-        results.slice(0, config.maxSources).map((r) => fetchWebPage(r, deps, robotsCache)),
+        results.slice(0, requested).map((r) => fetchWebPage(query, r, deps, robotsCache)),
       );
       let unreachable = 0;
       for (const item of settled) {
@@ -190,9 +252,17 @@ export async function gatherSources(query: string, deps: GatherDeps): Promise<Ga
         }
       }
       if (unreachable > 0) {
-        warnings.push(
-          `${unreachable} web source${unreachable === 1 ? '' : 's'} could not be fetched or read`,
+        deps.logger?.debug(
+          { unreachable, requested: results.length },
+          'answer: some candidates skipped',
         );
+        // Only surface this to the reader when the overfetch didn't make up
+        // for it — some failures are expected and already absorbed above.
+        if (webSources.length < config.maxSources) {
+          warnings.push(
+            `${unreachable} web source${unreachable === 1 ? '' : 's'} could not be fetched or read`,
+          );
+        }
       }
     } catch (error) {
       warnings.push(`web search failed: ${error instanceof Error ? error.message : String(error)}`);

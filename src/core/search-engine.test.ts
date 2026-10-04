@@ -11,6 +11,7 @@ function q(overrides: Partial<SearchQuery> = {}): SearchQuery {
     fuzzy: true,
     prefix: true,
     sort: 'relevance',
+    allowPartialMatch: true,
     ...overrides,
   };
 }

@@ -160,11 +160,17 @@ export class SearchEngine {
     if (q.length === 0) {
       ranked = this.list().map((doc) => ({ doc, score: 0, terms: [] }));
     } else {
-      const requested = options.combineWith ?? 'AND';
+      const requested = options.combineWith ?? query.combineWith ?? 'AND';
       ranked = runMiniSearch(requested);
       // A multi-word AND query with no exact match still has something to
-      // say: fall back to OR so a partial match outranks "nothing found".
-      if (ranked.length === 0 && requested === 'AND' && queryTerms.length > 1) {
+      // say: fall back to OR so a partial match outranks "nothing found" —
+      // unless the caller explicitly asked for strict (Precise-mode) matching.
+      if (
+        ranked.length === 0 &&
+        requested === 'AND' &&
+        queryTerms.length > 1 &&
+        query.allowPartialMatch
+      ) {
         ranked = runMiniSearch('OR');
       }
     }

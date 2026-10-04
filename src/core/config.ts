@@ -61,6 +61,16 @@ export interface AnswerConfig {
   trustedDomains: string[];
   /** Allow fetching sources on loopback / private hosts (SSRF guard). */
   allowPrivateHosts: boolean;
+  /** Try this LLM first when more than one is configured. */
+  preferredLlm?: 'anthropic' | 'openai';
+  /** Strip common tracking query params (utm_*, fbclid, ...) from web-search result URLs. */
+  stripTrackingParams: boolean;
+  /**
+   * Keyless DuckDuckGo and Wikipedia search. On outside tests so a normal
+   * query can reach the web without an API key. Set BEACON_KEYLESS_WEB_SEARCH=0
+   * to disable.
+   */
+  keylessWebSearch: boolean;
 }
 
 export interface PlateConfig {
@@ -109,8 +119,9 @@ function readOptional(name: string): string | undefined {
   return raw === undefined || raw.trim() === '' ? undefined : raw.trim();
 }
 
-export interface ConfigOverrides
-  extends Partial<Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit'>> {
+export interface ConfigOverrides extends Partial<
+  Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit'>
+> {
   plate?: Partial<PlateConfig>;
   answer?: Partial<AnswerConfig>;
   lookups?: Partial<LookupsConfig>;
@@ -196,6 +207,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       llmTimeoutMs: readInt('BEACON_ANSWER_LLM_TIMEOUT_MS', 30_000),
       trustedDomains: readList('ANSWER_TRUSTED_DOMAINS'),
       allowPrivateHosts: readBool('BEACON_ANSWER_ALLOW_PRIVATE', false),
+      preferredLlm: (() => {
+        const raw = readOptional('ANSWER_PREFERRED_LLM')?.toLowerCase();
+        return raw === 'anthropic' || raw === 'openai' ? raw : undefined;
+      })(),
+      stripTrackingParams: readBool('BEACON_ANSWER_STRIP_TRACKING_PARAMS', true),
+      keylessWebSearch: readBool(
+        'BEACON_KEYLESS_WEB_SEARCH',
+        (process.env.NODE_ENV ?? 'development') !== 'test',
+      ),
     },
     lookups: {
       enabled: readBool('BEACON_LOOKUPS_ENABLED', true),

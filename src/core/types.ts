@@ -56,7 +56,7 @@ export const bulkInputSchema = z.object({
 
 export const searchQuerySchema = z.object({
   q: z.string().max(1024).default(''),
-  limit: z.coerce.number().int().min(1).max(100).default(10),
+  limit: z.coerce.number().int().min(1).max(500).default(10),
   offset: z.coerce.number().int().min(0).max(100_000).default(0),
   tags: z
     .union([z.string(), z.array(z.string())])
@@ -67,6 +67,10 @@ export const searchQuerySchema = z.object({
   fuzzy: booleanParam(true),
   prefix: booleanParam(true),
   sort: z.enum(['relevance', 'newest', 'oldest', 'title']).default('relevance'),
+  /** AND requires every term; OR surfaces any match. Omit for the default (AND, falling back to OR). */
+  combineWith: z.enum(['AND', 'OR']).optional(),
+  /** Whether a no-exact-match AND query may fall back to a partial (OR) match. */
+  allowPartialMatch: booleanParam(true),
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 

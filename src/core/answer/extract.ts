@@ -202,6 +202,10 @@ export function selectGroundedClaims(
   const candidates: GroundedClaim[] = [];
 
   for (const source of sources) {
+    // A source whose text is boilerplate, off-topic, or an unconfirmed
+    // identity match never contributes a claim — no amount of coincidental
+    // keyword overlap in a nav blob should end up quoted as evidence.
+    if (!source.usableForAnswer) continue;
     const weight = trustWeight(source.trust);
     const scored = splitSentences(source.text)
       .map((text) => ({

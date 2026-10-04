@@ -12,6 +12,14 @@ function source(
     trustReason: '',
     live: true,
     retrievedAt: new Date().toISOString(),
+    relevanceScore: 1,
+    contentQualityScore: 1,
+    sourceQualityScore: 0.8,
+    entityMatchType: 'n/a',
+    identityMatchScore: 1,
+    isBoilerplate: false,
+    usableForAnswer: true,
+    reason: 'usable evidence',
     ...partial,
   };
 }

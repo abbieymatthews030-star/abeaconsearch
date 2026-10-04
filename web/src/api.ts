@@ -10,10 +10,12 @@ import type {
 } from '@core/types';
 import type { PlateCheck } from '@core/plate/types';
 import type {
+  AnswerCandidate,
   AnswerClaim,
   AnswerConfidence,
   AnswerResponse,
   AnswerSource,
+  EntityMatchType,
   TrustTier,
 } from '@core/answer/types';
 import type {
@@ -25,10 +27,19 @@ import type {
   QueryKind,
   UniversalQueryResponse,
 } from '@core/query-router';
+import type {
+  SearchAction,
+  SearchDiagnostic,
+  SearchIntent,
+  SearchOutcome,
+  SynthesisState,
+} from '@core/search/types';
 import type { DomainLookup } from '@core/lookups/domain';
 import type { IpLookup } from '@core/lookups/ip';
+import type { ProviderStatus } from '@core/providers';
 
 export type {
+  AnswerCandidate,
   AnswerClaim,
   AnswerConfidence,
   AnswerResponse,
@@ -37,19 +48,52 @@ export type {
   CalculationPrimary,
   DomainLookup,
   DomainPrimary,
+  EntityMatchType,
   IndexStats,
   IpLookup,
   IpPrimary,
   PlateCheck,
   PlatePrimary,
   PrimaryResult,
+  ProviderStatus,
   QueryKind,
+  SearchAction,
+  SearchDiagnostic,
   SearchHit,
+  SearchIntent,
+  SearchOutcome,
   SearchResponse,
   SuggestResponse,
+  SynthesisState,
   TrustTier,
   UniversalQueryResponse,
 };
+
+/** A setting as returned by GET /api/settings — metadata plus its current live value. */
+export interface SettingsEntry {
+  id: string;
+  label: string;
+  description: string;
+  type: 'toggle' | 'number' | 'text';
+  section: 'sources' | 'ai' | 'advanced';
+  advanced: boolean;
+  requiresRestart: boolean;
+  min?: number;
+  max?: number;
+  value: boolean | number | string;
+  isDefault: boolean;
+}
+
+export interface DiagnosticsResponse {
+  status: 'ok';
+  uptimeSeconds: number;
+  checkedAt: string;
+  documents: number;
+  tags: number;
+  sources: number;
+  lastPersistedAt: string | null;
+  providers: ProviderStatus[];
+}
 
 export type SearchSort = 'relevance' | 'newest' | 'oldest' | 'title';
 
@@ -58,7 +102,7 @@ export interface HealthResponse {
   documents: number;
   uptimeSeconds: number;
   plateChecks: { vehicleData: boolean; motHistory: boolean };
-  answer: { enabled: boolean; webSearch: string | null; llm: string[] };
+  answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
   lookups: { enabled: boolean };
 }
 
@@ -95,17 +139,30 @@ export interface SearchParams {
   tags?: string[];
   source?: string;
   sort?: SearchSort;
+  /** AND requires every word; OR matches any. Omit for the default (AND, falling back to OR). */
+  combineWith?: 'AND' | 'OR';
+  /** Whether a no-exact-match AND query may fall back to a partial (OR) match. Default true. */
+  allowPartialMatch?: boolean;
+  /** Fuzzy (typo-tolerant) matching. Default true. */
+  fuzzy?: boolean;
+}
+
+function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.offset) qs.set('offset', String(params.offset));
+  if (params.source) qs.set('source', params.source);
+  if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
+  if (params.combineWith) qs.set('combineWith', params.combineWith);
+  if (params.allowPartialMatch === false) qs.set('allowPartialMatch', 'false');
+  if (params.fuzzy === false) qs.set('fuzzy', 'false');
+  for (const tag of params.tags ?? []) qs.append('tags', tag);
 }
 
 export const api = {
   search(params: SearchParams, signal?: AbortSignal): Promise<SearchResponse> {
     const qs = new URLSearchParams();
     qs.set('q', params.q);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.offset) qs.set('offset', String(params.offset));
-    if (params.source) qs.set('source', params.source);
-    if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
-    for (const tag of params.tags ?? []) qs.append('tags', tag);
+    appendCommonParams(qs, params);
     return request<SearchResponse>(`/api/search?${qs.toString()}`, { signal });
   },
   /**
@@ -115,11 +172,7 @@ export const api = {
   query(params: SearchParams, signal?: AbortSignal): Promise<UniversalQueryResponse> {
     const qs = new URLSearchParams();
     qs.set('q', params.q);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.offset) qs.set('offset', String(params.offset));
-    if (params.source) qs.set('source', params.source);
-    if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
-    for (const tag of params.tags ?? []) qs.append('tags', tag);
+    appendCommonParams(qs, params);
     return request<UniversalQueryResponse>(`/api/query?${qs.toString()}`, { signal });
   },
   suggest(q: string, signal?: AbortSignal): Promise<SuggestResponse> {
@@ -180,5 +233,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(params),
     });
+  },
+  settings(): Promise<{ settings: SettingsEntry[] }> {
+    return request('/api/settings');
+  },
+  patchSettings(
+    patch: Record<string, boolean | number | string>,
+  ): Promise<{ applied: string[]; errors: Record<string, string>; settings: SettingsEntry[] }> {
+    return request('/api/settings', { method: 'PATCH', body: JSON.stringify(patch) });
+  },
+  resetSettings(ids?: string[]): Promise<{ reset: string[]; settings: SettingsEntry[] }> {
+    return request('/api/settings/reset', { method: 'POST', body: JSON.stringify({ ids }) });
+  },
+  providers(): Promise<{ providers: ProviderStatus[] }> {
+    return request('/api/providers');
+  },
+  testProvider(id: string): Promise<ProviderStatus> {
+    return request(`/api/providers/${encodeURIComponent(id)}/test`, { method: 'POST' });
+  },
+  diagnostics(): Promise<DiagnosticsResponse> {
+    return request('/api/diagnostics');
   },
 };

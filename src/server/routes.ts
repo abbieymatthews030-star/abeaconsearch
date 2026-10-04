@@ -8,7 +8,14 @@ import { lookupDomain } from '../core/lookups/domain.js';
 import { lookupIp } from '../core/lookups/ip.js';
 import type { PlateChecker } from '../core/plate/checker.js';
 import { plateCheckToDocument } from '../core/plate/index.js';
-import { classifyQuery, type PrimaryResult, type UniversalQueryResponse } from '../core/query-router.js';
+import { ProbeCache, listProviders, testProvider } from '../core/providers.js';
+import {
+  classifyQuery,
+  type PrimaryResult,
+  type UniversalQueryResponse,
+} from '../core/query-router.js';
+import { runUniversalSearch } from '../core/search/orchestrator.js';
+import type { RuntimeSettingsStore } from '../core/runtime-settings.js';
 import type { PersistentEngine } from '../core/store.js';
 import {
   answerQuerySchema,
@@ -37,6 +44,7 @@ export interface RouteContext {
   engine: PersistentEngine;
   plateChecker: PlateChecker;
   answerService: AnswerService | null;
+  settings: RuntimeSettingsStore;
 }
 
 /** Canonical `/health` body, used by both `/health` and `/api/health`. */
@@ -50,7 +58,7 @@ export function healthPayload(
     plateChecks: ctx.plateChecker.capabilities,
     answer: ctx.answerService
       ? ctx.answerService.capabilities
-      : { enabled: false as const, webSearch: null, llm: [] as string[] },
+      : { enabled: false as const, autoAnswer: false, webSearch: null, llm: [] as string[] },
     lookups: { enabled: ctx.config.lookups.enabled },
   };
 }
@@ -110,55 +118,79 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       return engine.search(query);
     });
 
-    // --- Universal query ------------------------------------------------------
-    // One box, many shapes: classify the raw text and, alongside the usual
-    // local-index search, attach a structured "primary" result when the query
-    // looks like a domain, IP, arithmetic expression, or a plate check.
-    app.get('/query', async (request): Promise<UniversalQueryResponse> => {
-      const query = searchQuerySchema.parse(request.query);
-      const classified = classifyQuery(query.q);
-      const local = engine.search(query);
+    const universalQuerySchema = searchQuerySchema.extend({
+      web: booleanParam(true),
+    });
 
-      let primary: PrimaryResult | null = null;
-      if (classified.kind === 'domain') {
-        primary = config.lookups.enabled
-          ? {
-              kind: 'domain',
-              domain: classified.value,
-              enabled: true,
-              data: await lookupDomain(classified.value, { timeoutMs: config.lookups.timeoutMs }),
-            }
-          : { kind: 'domain', domain: classified.value, enabled: false };
-      } else if (classified.kind === 'ip') {
-        primary = config.lookups.enabled
-          ? {
-              kind: 'ip',
-              ip: classified.value,
-              enabled: true,
-              data: await lookupIp(classified.value, { timeoutMs: config.lookups.timeoutMs }),
-            }
-          : { kind: 'ip', ip: classified.value, enabled: false };
-      } else if (classified.kind === 'calculation') {
-        try {
-          primary = { kind: 'calculation', expression: classified.value, result: evaluateExpression(classified.value) };
-        } catch (err) {
-          primary = {
-            kind: 'calculation',
-            expression: classified.value,
-            error: err instanceof CalculationError ? err.message : 'could not evaluate',
+    // --- Universal query ------------------------------------------------------
+    // One box, many shapes: classify the raw text, search the local index with
+    // a relevance gate, and — when that index has nothing useful — ask every
+    // configured web provider. Domain / IP / plate / calculation cards still
+    // attach alongside the result list.
+    app.get('/query', async (request): Promise<UniversalQueryResponse> => {
+      const query = universalQuerySchema.parse(request.query);
+      const classified = classifyQuery(query.q);
+
+      const primaryPromise: Promise<PrimaryResult | null> = (async () => {
+        if (classified.kind === 'domain') {
+          return config.lookups.enabled
+            ? {
+                kind: 'domain' as const,
+                domain: classified.value,
+                enabled: true,
+                data: await lookupDomain(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+              }
+            : { kind: 'domain' as const, domain: classified.value, enabled: false };
+        }
+        if (classified.kind === 'ip') {
+          return config.lookups.enabled
+            ? {
+                kind: 'ip' as const,
+                ip: classified.value,
+                enabled: true,
+                data: await lookupIp(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+              }
+            : { kind: 'ip' as const, ip: classified.value, enabled: false };
+        }
+        if (classified.kind === 'calculation') {
+          try {
+            return {
+              kind: 'calculation' as const,
+              expression: classified.value,
+              result: evaluateExpression(classified.value),
+            };
+          } catch (err) {
+            return {
+              kind: 'calculation' as const,
+              expression: classified.value,
+              error: err instanceof CalculationError ? err.message : 'could not evaluate',
+            };
+          }
+        }
+        if (classified.kind === 'plate') {
+          return {
+            kind: 'plate' as const,
+            data: await plateChecker.check(classified.value, {
+              includeVehicleData: true,
+              includeMotHistory: true,
+            }),
           };
         }
-      } else if (classified.kind === 'plate') {
-        primary = {
-          kind: 'plate',
-          data: await plateChecker.check(classified.value, {
-            includeVehicleData: true,
-            includeMotHistory: true,
-          }),
-        };
-      }
+        return null;
+      })();
 
-      return { query: query.q, kind: classified.kind, primary, local };
+      const [envelope, primary] = await Promise.all([
+        runUniversalSearch({
+          query: query.q,
+          search: query,
+          engine,
+          config: config.answer,
+          includeWeb: query.web,
+        }),
+        primaryPromise,
+      ]);
+
+      return { ...envelope, kind: classified.kind, primary };
     });
 
     app.get('/suggest', async (request) => {
@@ -167,9 +199,64 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     });
 
     app.get('/answer', async (request) => {
-      if (!ctx.answerService) throw new HttpError(404, 'answer synthesis is disabled');
+      if (!ctx.answerService || !config.answer.enabled) {
+        throw new HttpError(404, 'answer synthesis is disabled');
+      }
       const { q, fresh } = answerQuerySchema.parse(request.query);
       return ctx.answerService.answer(q, { fresh });
+    });
+
+    // --- Settings ---------------------------------------------------------
+    app.get('/settings', async () => ({ settings: ctx.settings.list() }));
+
+    const settingsPatchSchema = z
+      .record(z.string(), z.union([z.boolean(), z.number(), z.string()]))
+      .refine((v) => Object.keys(v).length > 0, 'at least one setting is required');
+
+    app.patch('/settings', async (request, reply) => {
+      const patch = settingsPatchSchema.parse(request.body);
+      const { applied, errors } = await ctx.settings.update(patch);
+      if (applied.length === 0 && Object.keys(errors).length > 0) reply.status(400);
+      return { applied, errors, settings: ctx.settings.list() };
+    });
+
+    const settingsResetSchema = z.object({ ids: z.array(z.string()).optional() });
+
+    app.post('/settings/reset', async (request) => {
+      const { ids } = settingsResetSchema.parse(request.body ?? {});
+      const reset = await ctx.settings.reset(ids);
+      return { reset, settings: ctx.settings.list() };
+    });
+
+    // --- Providers (sources) ------------------------------------------------
+    const probeCache = new ProbeCache();
+    const providerDeps = { config, engine, plateChecker };
+
+    app.get('/providers', async () => ({ providers: listProviders(providerDeps, probeCache) }));
+
+    app.post('/providers/:id/test', async (request) => {
+      const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+      const current = listProviders(providerDeps, probeCache).find((p) => p.id === id);
+      if (!current) throw new HttpError(404, `Unknown provider "${id}"`);
+      if (!current.testable) throw new HttpError(400, `"${id}" has nothing to test`);
+      const result = await testProvider(id, providerDeps);
+      probeCache.set(id, result);
+      return listProviders(providerDeps, probeCache).find((p) => p.id === id);
+    });
+
+    // --- Diagnostics ---------------------------------------------------------
+    app.get('/diagnostics', async () => {
+      const stats = engine.stats(config.indexFile);
+      return {
+        status: 'ok' as const,
+        uptimeSeconds: Math.round(process.uptime()),
+        checkedAt: new Date().toISOString(),
+        documents: stats.documents,
+        tags: stats.tags,
+        sources: stats.sources,
+        lastPersistedAt: stats.lastPersistedAt,
+        providers: listProviders(providerDeps, probeCache),
+      };
     });
 
     app.get('/documents', async (request) => {

@@ -15,6 +15,7 @@ describe('HTTP API', () => {
   beforeEach(async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'beacon-test-'));
     const config = loadConfig({
+      dataDir: dir,
       indexFile: path.join(dir, 'index.json'),
       webDir: path.join(dir, 'nonexistent-web'),
       logLevel: 'silent',
@@ -45,6 +46,34 @@ describe('HTTP API', () => {
     expect(Object.keys(bare.json()).sort()).toEqual(Object.keys(api.json()).sort());
   });
 
+  it('does not return an unrelated local document for a person-name query', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      payload: {
+        id: 'minisearch-ranking-explained',
+        title: 'MiniSearch Ranking Explained',
+        body: 'MiniSearch ranks documents using term frequency and field boosting, with title matches weighted higher than body matches.',
+        tags: ['search', 'ranking'],
+      },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/query?q=abbiey%20matthews' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.intent).toBe('person');
+    expect(
+      body.results.some((hit: { id: string }) => hit.id === 'minisearch-ranking-explained'),
+    ).toBe(false);
+    expect(body.outcome).toBe('unconfigured');
+    const missing = body.diagnostics
+      .flatMap((item: { missingEnv: string[] }) => item.missingEnv)
+      .join(' ');
+    expect(missing).toContain('BRAVE_SEARCH_API_KEY');
+    expect(missing).toContain('TAVILY_API_KEY');
+    expect(missing).toContain('SEARXNG_URL');
+  });
+
   it('weaves an answer from the local index and cites its sources', async () => {
     await app.inject({
       method: 'POST',
@@ -72,6 +101,7 @@ describe('HTTP API', () => {
 
   it('returns 404 for /api/answer when answer synthesis is disabled', async () => {
     const config = loadConfig({
+      dataDir: dir,
       indexFile: path.join(dir, 'index2.json'),
       webDir: path.join(dir, 'nonexistent-web'),
       logLevel: 'silent',
@@ -86,7 +116,12 @@ describe('HTTP API', () => {
       const res = await disabled.inject({ method: 'GET', url: '/api/answer?q=anything here' });
       expect(res.statusCode).toBe(404);
       const health = await disabled.inject({ method: 'GET', url: '/api/health' });
-      expect(health.json().answer).toEqual({ enabled: false, webSearch: null, llm: [] });
+      expect(health.json().answer).toEqual({
+        enabled: false,
+        autoAnswer: false,
+        webSearch: null,
+        llm: [],
+      });
     } finally {
       await disabled.close();
     }
@@ -168,6 +203,7 @@ describe('HTTP API', () => {
     await app.close();
 
     const config = loadConfig({
+      dataDir: dir,
       indexFile: path.join(dir, 'index.json'),
       webDir: path.join(dir, 'nonexistent-web'),
       logLevel: 'silent',
@@ -225,5 +261,83 @@ describe('HTTP API', () => {
     });
     expect(res.json().valid).toBe(false);
     expect(res.json().summary.status).toBe('invalid');
+  });
+
+  it('lists settings, patches one, and rejects an out-of-range value', async () => {
+    const list = await app.inject({ method: 'GET', url: '/api/settings' });
+    expect(list.statusCode).toBe(200);
+    const before = list.json().settings.find((s: { id: string }) => s.id === 'answerMaxSources');
+    expect(before).toMatchObject({ isDefault: true });
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings',
+      payload: { answerMaxSources: 4 },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json().applied).toEqual(['answerMaxSources']);
+    const after = patch.json().settings.find((s: { id: string }) => s.id === 'answerMaxSources');
+    expect(after).toMatchObject({ value: 4, isDefault: false });
+
+    const bad = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings',
+      payload: { answerMaxSources: 999 },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().errors.answerMaxSources).toMatch(/<= 50/);
+  });
+
+  it('resets settings back to their defaults', async () => {
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { crawlMaxPages: 7 } });
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/api/settings/reset',
+      payload: { ids: ['crawlMaxPages'] },
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json().reset).toEqual(['crawlMaxPages']);
+    const entry = reset.json().settings.find((s: { id: string }) => s.id === 'crawlMaxPages');
+    expect(entry).toMatchObject({ value: 50, isDefault: true });
+  });
+
+  it('lists providers derived from real config, with no fabricated entries', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/providers' });
+    expect(res.statusCode).toBe(200);
+    const ids = res.json().providers.map((p: { id: string }) => p.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'local_index',
+        'crawler',
+        'domain_lookups',
+        'dvla_vehicle',
+        'dvsa_mot',
+        'answer_web_search',
+        'answer_llm',
+      ]),
+    );
+    const dvla = res.json().providers.find((p: { id: string }) => p.id === 'dvla_vehicle');
+    expect(dvla.status).toBe('not_configured');
+    expect(dvla.testable).toBe(false);
+  });
+
+  it('404s testing an unknown provider and 400s a non-testable one', async () => {
+    const unknown = await app.inject({ method: 'POST', url: '/api/providers/not-a-thing/test' });
+    expect(unknown.statusCode).toBe(404);
+    const notTestable = await app.inject({
+      method: 'POST',
+      url: '/api/providers/local_index/test',
+    });
+    expect(notTestable.statusCode).toBe(400);
+  });
+
+  it('reports diagnostics with real counts and the provider list', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/diagnostics' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.status).toBe('ok');
+    expect(typeof body.uptimeSeconds).toBe('number');
+    expect(typeof body.checkedAt).toBe('string');
+    expect(Array.isArray(body.providers)).toBe(true);
   });
 });

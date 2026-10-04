@@ -3,23 +3,36 @@ import {
   api,
   type AnswerConfidence,
   type AnswerResponse,
+  type AnswerSource,
   type BeaconDocument,
   type CalculationPrimary,
+  type DiagnosticsResponse,
   type DomainPrimary,
+  type EntityMatchType,
   type HealthResponse,
-  type IndexStats,
   type IpPrimary,
   type PlateCheck,
   type PrimaryResult,
+  type ProviderStatus,
   type QueryKind,
+  type SearchAction,
   type SearchSort,
+  type SettingsEntry,
   type TrustTier,
   type UniversalQueryResponse,
 } from './api';
+import {
+  CLIENT_SETTINGS,
+  SERVER_SETTINGS,
+  searchSettings,
+  settingsInSection,
+  type SettingDefinition,
+  type SettingSection,
+} from './settings-registry';
 
-type Tab = 'search' | 'history' | 'sources' | 'settings';
+type Tab = 'search' | 'history' | 'settings' | 'docs';
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -152,6 +165,72 @@ function saveHistory(entries: HistoryEntry[]): void {
   }
 }
 
+// --- Client-only settings (General / most of Search / most of Privacy) ------
+// These never touch the server — they're per-browser preferences, persisted
+// to localStorage, metadata-driven by `CLIENT_SETTINGS` in settings-registry.
+
+const CLIENT_SETTINGS_KEY = 'beacon:settings';
+
+type ClientSettingValues = Record<string, unknown>;
+
+function defaultClientSettings(): ClientSettingValues {
+  const values: ClientSettingValues = {};
+  for (const def of CLIENT_SETTINGS) values[def.id] = def.defaultValue;
+  return values;
+}
+
+function loadClientSettings(): ClientSettingValues {
+  const defaults = defaultClientSettings();
+  try {
+    const raw = localStorage.getItem(CLIENT_SETTINGS_KEY);
+    if (!raw) return defaults;
+    const parsed: unknown = JSON.parse(raw);
+    return { ...defaults, ...(typeof parsed === 'object' && parsed !== null ? parsed : {}) };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveClientSettings(values: ClientSettingValues): void {
+  try {
+    localStorage.setItem(CLIENT_SETTINGS_KEY, JSON.stringify(values));
+  } catch {
+    /* storage can be unavailable (private browsing, quota) */
+  }
+}
+
+interface ClientSettingsApi {
+  values: ClientSettingValues;
+  setValue: (id: string, value: unknown) => void;
+  resetIds: (ids: string[]) => void;
+}
+
+function useClientSettings(): ClientSettingsApi {
+  const [values, setValues] = useState<ClientSettingValues>(() => loadClientSettings());
+
+  const setValue = useCallback((id: string, value: unknown) => {
+    setValues((prev) => {
+      const next = { ...prev, [id]: value };
+      saveClientSettings(next);
+      return next;
+    });
+  }, []);
+
+  const resetIds = useCallback((ids: string[]) => {
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        const def = CLIENT_SETTINGS.find((d) => d.id === id);
+        if (def) next[id] = def.defaultValue;
+      }
+      saveClientSettings(next);
+      return next;
+    });
+  }, []);
+
+  return { values, setValue, resetIds };
+}
+
 /** How many distinct sources/capabilities Beacon currently has wired up. */
 function countConnectedSources(health: HealthResponse | null): number {
   if (!health) return 0;
@@ -166,35 +245,28 @@ function countConnectedSources(health: HealthResponse | null): number {
 
 export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>('search');
-  const [stats, setStats] = useState<IndexStats | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const clientSettings = useClientSettings();
 
-  const refreshStats = useCallback(() => {
-    api
-      .stats()
-      .then(setStats)
-      .catch(() => setStats(null));
-  }, []);
-  useEffect(refreshStats, [refreshStats]);
-
-  useEffect(() => {
+  const refreshHealth = useCallback(() => {
     api
       .health()
       .then(setHealth)
       .catch(() => setHealth(null));
   }, []);
+  useEffect(refreshHealth, [refreshHealth]);
 
   const recordHistory = useCallback((query: string, kind: QueryKind) => {
     const q = query.trim();
     if (!q) return;
     setHistory((prev) => {
       if (prev[0]?.query === q) return prev;
-      const next = [{ query: q, kind, at: new Date().toISOString() }, ...prev.filter((e) => e.query !== q)].slice(
-        0,
-        HISTORY_LIMIT,
-      );
+      const next = [
+        { query: q, kind, at: new Date().toISOString() },
+        ...prev.filter((e) => e.query !== q),
+      ].slice(0, HISTORY_LIMIT);
       saveHistory(next);
       return next;
     });
@@ -211,9 +283,13 @@ export function App(): JSX.Element {
   };
 
   const connectedSources = countConnectedSources(health);
+  const density =
+    typeof clientSettings.values.interfaceDensity === 'string'
+      ? clientSettings.values.interfaceDensity
+      : 'comfortable';
 
   return (
-    <div className="app">
+    <div className="app" data-density={density}>
       <header className="app__header">
         <div className="brand">
           <Beacon size={40} />
@@ -225,8 +301,8 @@ export function App(): JSX.Element {
             [
               ['search', 'Search'],
               ['history', 'History'],
-              ['sources', 'Sources'],
               ['settings', 'Settings'],
+              ['docs', 'Docs'],
             ] as Array<[Tab, string]>
           ).map(([id, label]) => (
             <button
@@ -242,10 +318,28 @@ export function App(): JSX.Element {
       </header>
 
       <main className="app__main">
-        {tab === 'search' && <SearchView input={input} onInputChange={setInput} onCommit={recordHistory} health={health} />}
-        {tab === 'history' && <HistoryView entries={history} onPick={runFromHistory} onClear={clearHistory} />}
-        {tab === 'sources' && <SourcesView stats={stats} health={health} onDone={refreshStats} />}
-        {tab === 'settings' && <SettingsView stats={stats} health={health} />}
+        {tab === 'search' && (
+          <SearchView
+            input={input}
+            onInputChange={setInput}
+            onCommit={recordHistory}
+            health={health}
+            clientSettings={clientSettings}
+          />
+        )}
+        {tab === 'history' && (
+          <HistoryView entries={history} onPick={runFromHistory} onClear={clearHistory} />
+        )}
+        {tab === 'settings' && (
+          <SettingsView
+            health={health}
+            onSettingsChanged={refreshHealth}
+            clientSettings={clientSettings}
+            historyCount={history.length}
+            onClearHistory={clearHistory}
+          />
+        )}
+        {tab === 'docs' && <DocsView />}
       </main>
 
       <footer className="app__footer">
@@ -276,20 +370,31 @@ function SearchView({
   onInputChange,
   onCommit,
   health,
+  clientSettings,
 }: {
   input: string;
   onInputChange: (value: string) => void;
   onCommit: (query: string, kind: QueryKind) => void;
   health: HealthResponse | null;
+  clientSettings: ClientSettingsApi;
 }): JSX.Element {
+  const resultsPerPage = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
+  const openInNewTab = clientSettings.values.openInNewTab !== false;
+  const searchMode = String(clientSettings.values.searchMode ?? 'balanced');
+  const typoCorrection = clientSettings.values.typoCorrection !== false;
+  const queryExpansion = clientSettings.values.queryExpansion !== false;
+  const directAnswers = health?.answer.autoAnswer ?? true;
+
   const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [sort, setSort] = useState<SearchSort>('relevance');
+  const [sort, setSort] = useState<SearchSort>(
+    clientSettings.values.freshness ? 'newest' : 'relevance',
+  );
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<UniversalQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const query = useDebounced(input, 200);
+  const query = useDebounced(input, 400);
   const answerQuery = useDebounced(input.trim(), 900);
   const historyQuery = useDebounced(input.trim(), 1500);
   const abortRef = useRef<AbortController | null>(null);
@@ -305,6 +410,11 @@ function SearchView({
   const [answerLoading, setAnswerLoading] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [answerRequested, setAnswerRequested] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [sourceNote, setSourceNote] = useState<string | null>(null);
+  const [addingSource, setAddingSource] = useState(false);
   const answerAbort = useRef<AbortController | null>(null);
 
   const runAnswer = useCallback((q: string, fresh: boolean) => {
@@ -329,19 +439,30 @@ function SearchView({
       });
   }, []);
 
+  const answerIntent = result && result.query === answerQuery ? result.intent : null;
+
   useEffect(() => {
     answerAbort.current?.abort();
     setAnswer(null);
     setAnswerError(null);
     setAnswerRequested(false);
     setAnswerLoading(false);
-    if (!answersEnabled || !answerQuery) return;
-    if (isQuestionLike(answerQuery) || looksLikeResearchTarget(answerQuery)) runAnswer(answerQuery, false);
-  }, [answerQuery, answersEnabled, runAnswer]);
+    if (!answersEnabled || !directAnswers || !answerQuery || !answerIntent) return;
+    const research =
+      isQuestionLike(answerQuery) ||
+      looksLikeResearchTarget(answerQuery) ||
+      answerIntent === 'person' ||
+      answerIntent === 'company' ||
+      answerIntent === 'email' ||
+      answerIntent === 'username' ||
+      answerIntent === 'location' ||
+      answerIntent === 'factual';
+    if (research) runAnswer(answerQuery, false);
+  }, [answerQuery, answerIntent, answersEnabled, directAnswers, runAnswer]);
 
   useEffect(() => {
     setPage(0);
-  }, [query, activeTags, sort]);
+  }, [query, activeTags, sort, searchMode, typoCorrection, queryExpansion]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -350,7 +471,16 @@ function SearchView({
     setLoading(true);
     api
       .query(
-        { q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE, tags: activeTags, sort },
+        {
+          q: query,
+          limit: resultsPerPage,
+          offset: page * resultsPerPage,
+          tags: activeTags,
+          sort,
+          combineWith: searchMode === 'precise' ? 'AND' : searchMode === 'broad' ? 'OR' : undefined,
+          allowPartialMatch: searchMode === 'precise' ? false : queryExpansion,
+          fuzzy: typoCorrection,
+        },
         controller.signal,
       )
       .then((res) => {
@@ -365,7 +495,17 @@ function SearchView({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [query, page, activeTags, sort]);
+  }, [
+    query,
+    page,
+    activeTags,
+    sort,
+    resultsPerPage,
+    searchMode,
+    typoCorrection,
+    queryExpansion,
+    retryNonce,
+  ]);
 
   useEffect(() => {
     const q = historyQuery.trim();
@@ -403,7 +543,8 @@ function SearchView({
   };
 
   const local = result?.local ?? null;
-  const totalPages = local ? Math.max(1, Math.ceil(local.total / PAGE_SIZE)) : 1;
+  const hits = result?.results ?? [];
+  const totalPages = result ? Math.max(1, Math.ceil(result.total / resultsPerPage)) : 1;
   const facetTags = useMemo(
     () =>
       local
@@ -418,7 +559,53 @@ function SearchView({
     setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
 
   const hasFilters = (local?.total ?? 0) > 1 || activeTags.length > 0 || facetTags.length > 0;
+  const answerHasProse = Boolean(
+    answer &&
+    (answer.confidence !== 'none' ||
+      (answer.candidates?.length ?? 0) > 0 ||
+      answer.claims.length > 0),
+  );
+  const showEmpty = Boolean(
+    result && query.trim() && hits.length === 0 && !loading && !result.primary,
+  );
+  const showReady = Boolean(result && !query.trim() && hits.length === 0 && !loading);
 
+  const runAction = (action: SearchAction) => {
+    if (action.id === 'add') {
+      setAddOpen(true);
+      setSourceNote(null);
+      return;
+    }
+    if (!action.query) return;
+    if (action.id === 'web' && action.query === query.trim()) {
+      setRetryNonce((n) => n + 1);
+      return;
+    }
+    onInputChange(action.query);
+  };
+
+  const submitSource = (event: React.FormEvent) => {
+    event.preventDefault();
+    const url = sourceUrl.trim();
+    if (!url) return;
+    setAddingSource(true);
+    setSourceNote(null);
+    api
+      .crawl({ url, maxPages: 1 })
+      .then((res) => {
+        setSourceNote(
+          res.documentsIndexed > 0
+            ? `Indexed ${res.documentsIndexed} page from that URL.`
+            : 'The URL was fetched but no page was indexed.',
+        );
+        setSourceUrl('');
+        setRetryNonce((n) => n + 1);
+      })
+      .catch((err: unknown) =>
+        setSourceNote(err instanceof Error ? err.message : 'Could not add that URL.'),
+      )
+      .finally(() => setAddingSource(false));
+  };
   return (
     <section className="search">
       <div className="search__box">
@@ -506,11 +693,15 @@ function SearchView({
         </button>
       )}
 
-      {answerError && answerRequested && (
-        <p className="notice notice--error">answer: {answerError}</p>
+      {loading && query.trim() && (
+        <p className="search__status">Searching web and connected sources…</p>
       )}
 
-      {answerRequested && (answer || answerLoading) && (
+      {answerError && answerRequested && (
+        <p className="notice">Couldn’t write a summary. Results are listed separately.</p>
+      )}
+
+      {answerRequested && answerHasProse && (
         <AnswerCard
           data={answer}
           loading={answerLoading}
@@ -518,16 +709,22 @@ function SearchView({
         />
       )}
 
-      {local && (
+      {!loading && answerLoading && hits.length > 0 && (
+        <p className="search__status">Checking whether these results support a summary…</p>
+      )}
+
+      {!answerLoading && hits.length > 0 && answer && !answerHasProse && (
+        <p className="search__summary-note">
+          Results found for “{query.trim()}”, but there isn’t enough evidence to write a summary.
+        </p>
+      )}
+
+      {result && query.trim() && !loading && (
         <p className="search__meta">
-          <strong>{local.total.toLocaleString()}</strong> result{local.total === 1 ? '' : 's'}
-          {local.query ? ` for “${local.query}”` : ''} · {local.tookMs} ms
-          {loading && (
-            <>
-              {' · '}
-              <span className="search__updating" aria-hidden /> updating
-            </>
-          )}
+          <strong>{result.total.toLocaleString()}</strong> result{result.total === 1 ? '' : 's'}
+          {result.query ? ` for “${result.query}”` : ''}
+          {' · '}
+          {result.tookMs} ms
           {hasFilters && (
             <button
               type="button"
@@ -588,21 +785,23 @@ function SearchView({
       )}
 
       <ol className="results">
-        {local?.hits.map((hit) => (
+        {hits.map((hit) => (
           <li key={hit.id} className="result">
             <h3 className="result__title">
               {hit.url ? (
-                <a href={hit.url} target="_blank" rel="noreferrer">
+                <a href={hit.url} target={openInNewTab ? '_blank' : undefined} rel="noreferrer">
                   <span dangerouslySetInnerHTML={{ __html: hit.title }} />
                 </a>
               ) : (
                 <span dangerouslySetInnerHTML={{ __html: hit.title }} />
               )}
             </h3>
-            {hit.url && <div className="result__url">{hit.url}</div>}
-            <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
+            {(hit.domain || hit.url) && <div className="result__url">{hit.domain || hit.url}</div>}
+            {hit.snippet && (
+              <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
+            )}
             <div className="result__foot">
-              {hit.source && <span className="result__source">{hit.source}</span>}
+              <span className="result__source">{hit.provider}</span>
               {hit.tags.map((tag) => (
                 <button
                   key={tag}
@@ -613,42 +812,103 @@ function SearchView({
                   {tag}
                 </button>
               ))}
-              {hit.score > 0 && <span className="result__score">score {hit.score}</span>}
             </div>
           </li>
         ))}
       </ol>
 
-      {local && local.total === 0 && !loading && !result?.primary && (
+      {(showEmpty || (!answerLoading && hits.length > 0 && answer && !answerHasProse)) &&
+        result && (
+          <div className={showEmpty ? 'empty empty--quiet' : 'search__actions'}>
+            {showEmpty && (
+              <>
+                <strong>No strong matches found for “{query.trim()}”.</strong>
+                <span>
+                  {result.outcome === 'unconfigured'
+                    ? 'Web search is not set up on this server.'
+                    : `Searched ${result.attempted.join(', ')}.`}
+                </span>
+              </>
+            )}
+            <div className="empty__actions">
+              {result.actions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="chip"
+                  onClick={() => runAction(action)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            {(addOpen || showEmpty) && (
+              <form className="empty__add" onSubmit={submitSource}>
+                <input
+                  value={sourceUrl}
+                  onChange={(event) => setSourceUrl(event.target.value)}
+                  type="url"
+                  placeholder="https://… add a source URL"
+                  aria-label="Source URL"
+                />
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={addingSource || sourceUrl.trim() === ''}
+                >
+                  {addingSource ? 'Adding…' : 'Add'}
+                </button>
+              </form>
+            )}
+            {sourceNote && <span>{sourceNote}</span>}
+            {local?.suggestion && (
+              <button
+                type="button"
+                className="chip"
+                onClick={() => onInputChange(local.suggestion!)}
+              >
+                Try “{local.suggestion}”
+              </button>
+            )}
+          </div>
+        )}
+
+      {showReady && (
         <div className="empty">
           <Beacon size={150} />
-          <strong>{query ? 'nothing matched' : 'ready'}</strong>
-          <span>
-            {query
-              ? 'Nothing in the index matched. Try a different query, or clear the active filters.'
-              : 'Type to search — a domain, an IP, a calculation, a plate, or plain text.'}
-          </span>
-          {local.suggestion && (
-            <button
-              type="button"
-              className="answer__cta"
-              onClick={() => onInputChange(local.suggestion!)}
-            >
-              ↳ did you mean “{local.suggestion}”?
-            </button>
-          )}
-          {query && answersEnabled && !answerRequested && (
-            <button type="button" className="answer__cta" onClick={() => runAnswer(query, false)}>
-              ↳ weave an answer from live sources instead
-            </button>
-          )}
-          <span className="empty__dots" aria-hidden>
-            . . . . . . .
-          </span>
+          <strong>ready</strong>
+          <span>Type to search — a name, a domain, a question, or plain text.</span>
         </div>
       )}
 
-      {local && local.total > PAGE_SIZE && (
+      {result && query.trim() && (
+        <details className="devdetails">
+          <summary>Search details</summary>
+          {result.queriesTried.length > 0 && <p>Tried {result.queriesTried.join(' → ')}</p>}
+          <ul>
+            {result.diagnostics.map((item) => (
+              <li key={item.id}>
+                {item.label}: {item.status}
+                {item.detail ? ` — ${item.detail}` : ''}
+                {item.missingEnv.length > 0 ? ` — set ${item.missingEnv.join(', ')}` : ''}
+                {item.tookMs != null ? ` — ${item.tookMs} ms` : ''}
+              </li>
+            ))}
+          </ul>
+          {answer && (
+            <p>
+              Summary:{' '}
+              {answer.synthesizer === 'extractive'
+                ? 'extractive, no model configured'
+                : answer.synthesizer}
+              {answer.warnings.length > 0 ? `. ${answer.warnings.join(' ')}` : ''}
+              {answer.tookMs ? ` — ${Math.round(answer.tookMs)} ms` : ''}
+            </p>
+          )}
+        </details>
+      )}
+
+      {result && result.total > resultsPerPage && (
         <div className="pager">
           <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             ← Previous
@@ -887,77 +1147,6 @@ function HistoryView({
   );
 }
 
-// --- Sources (connected capabilities + document management) -----------------
-
-function SourcesView({
-  stats,
-  health,
-  onDone,
-}: {
-  stats: IndexStats | null;
-  health: HealthResponse | null;
-  onDone: () => void;
-}): JSX.Element {
-  const dot = (on: boolean) => (on ? 'sources__dot sources__dot--on' : 'sources__dot');
-
-  return (
-    <section className="sources">
-      <section className="sources__overview">
-        <h2>Connected sources</h2>
-        <ul className="sources__list">
-          <li>
-            <span className={dot(true)} aria-hidden />
-            Local full-text index
-            <span className="sources__detail">
-              {stats ? `${stats.documents.toLocaleString()} documents` : '—'}
-            </span>
-          </li>
-          <li>
-            <span className={dot(true)} aria-hidden />
-            Web crawler
-            <span className="sources__detail">fetch &amp; index pages on demand</span>
-          </li>
-          <li>
-            <span className={dot(Boolean(health?.lookups.enabled))} aria-hidden />
-            Domain / IP lookups (DNS + RDAP)
-            <span className="sources__detail">
-              {health ? (health.lookups.enabled ? 'enabled' : 'disabled') : '—'}
-            </span>
-          </li>
-          <li>
-            <span className={dot(Boolean(health?.plateChecks.vehicleData))} aria-hidden />
-            DVLA vehicle data
-            <span className="sources__detail">
-              {health ? (health.plateChecks.vehicleData ? 'configured' : 'not configured') : '—'}
-            </span>
-          </li>
-          <li>
-            <span className={dot(Boolean(health?.plateChecks.motHistory))} aria-hidden />
-            DVSA MOT history
-            <span className="sources__detail">
-              {health ? (health.plateChecks.motHistory ? 'configured' : 'not configured') : '—'}
-            </span>
-          </li>
-          <li>
-            <span className={dot(Boolean(health?.answer.webSearch))} aria-hidden />
-            Answer web search
-            <span className="sources__detail">{health?.answer.webSearch ?? 'not configured'}</span>
-          </li>
-          <li>
-            <span className={dot(Boolean(health && health.answer.llm.length > 0))} aria-hidden />
-            Answer writer (LLM)
-            <span className="sources__detail">
-              {health && health.answer.llm.length > 0 ? health.answer.llm.join(', ') : 'extractive only'}
-            </span>
-          </li>
-        </ul>
-      </section>
-
-      <LibraryView onDone={onDone} />
-    </section>
-  );
-}
-
 function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
   const [docs, setDocs] = useState<BeaconDocument[]>([]);
   const [total, setTotal] = useState(0);
@@ -969,7 +1158,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
   const refresh = useCallback(() => {
     setLoading(true);
     api
-      .documents({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      .documents({ limit: DEFAULT_PAGE_SIZE, offset: page * DEFAULT_PAGE_SIZE })
       .then((res) => {
         setDocs(res.documents);
         setTotal(res.total);
@@ -1013,7 +1202,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to clear'));
   };
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
 
   return (
     <section className="library">
@@ -1096,7 +1285,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
         )
       )}
 
-      {total > PAGE_SIZE && (
+      {total > DEFAULT_PAGE_SIZE && (
         <div className="pager">
           <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             ← Previous
@@ -1117,14 +1306,36 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
   );
 }
 
+const CONFIDENCE_LABEL: Record<AnswerConfidence, string> = {
+  high: 'High confidence',
+  medium: 'Medium confidence',
+  low: 'Low confidence',
+  none: 'No summary',
+};
+
 function ConfidenceBadge({ confidence }: { confidence: AnswerConfidence }): JSX.Element {
   const cls =
     confidence === 'high' || confidence === 'medium'
       ? 'badge badge--ok'
       : confidence === 'low'
         ? 'badge badge--warn'
-        : 'badge badge--fail';
-  return <span className={cls}>{confidence} confidence</span>;
+        : 'badge badge--muted';
+  return <span className={cls}>{CONFIDENCE_LABEL[confidence]}</span>;
+}
+
+const MATCH_LABEL: Partial<Record<EntityMatchType, string>> = {
+  exact: 'Exact name match',
+  partial: 'Possible match',
+  different: 'Different entity',
+  topical: 'Related topic',
+};
+
+/** A source's subject-match label is a separate signal from its trust/reliability — never collapse the two. */
+function sourceMatchLabel(source: AnswerSource): string | undefined {
+  const byMatch = MATCH_LABEL[source.matchType];
+  if (byMatch) return byMatch;
+  if (!source.usedInAnswer) return 'Low content quality';
+  return undefined;
 }
 
 function AnswerCard({
@@ -1156,7 +1367,33 @@ function AnswerCard({
         <>
           <p className="answer__reason">{data.confidenceReason}</p>
 
-          {data.claims.length > 0 ? (
+          {data.candidates && data.candidates.length > 0 ? (
+            <>
+              <p className="answer__body">{data.answer}</p>
+              <ol className="answer__candidates">
+                {data.candidates.map((candidate, i) => (
+                  <li key={i} className="answer__candidate">
+                    <div className="answer__candidate-head">
+                      <strong>{candidate.label}</strong>
+                      {MATCH_LABEL[candidate.matchType] && (
+                        <span className={`match match--${candidate.matchType}`}>
+                          {MATCH_LABEL[candidate.matchType]}
+                        </span>
+                      )}
+                    </div>
+                    <p className="answer__candidate-summary">
+                      {stripCitations(candidate.summary)}{' '}
+                      {candidate.sourceIds.map((id) => (
+                        <a key={id} href={`#answer-src-${id}`} className="cite">
+                          [{id}]
+                        </a>
+                      ))}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : data.claims.length > 0 ? (
             <p className="answer__body">
               {data.claims.map((claim, i) => (
                 <span key={i} className={claim.supported ? 'claim' : 'claim claim--unverified'}>
@@ -1176,6 +1413,19 @@ function AnswerCard({
 
           {data.disclaimer && <p className="answer__disclaimer">⚠ {data.disclaimer}</p>}
 
+          {data.searchGaps.some((gap) => /disagree/i.test(gap)) && (
+            <div className="answer__gaps">
+              <span className="answer__gaps-tag">Search gaps</span>
+              <ul>
+                {data.searchGaps
+                  .filter((gap) => /disagree/i.test(gap))
+                  .map((gap, i) => (
+                    <li key={i}>{gap}</li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
           {data.sources.length > 0 && (
             <ol className="answer__sources">
               {data.sources.map((source) => (
@@ -1191,6 +1441,11 @@ function AnswerCard({
                     )}
                   </div>
                   <div className="answer__source-meta">
+                    {sourceMatchLabel(source) && (
+                      <span className={`match match--${source.matchType}`}>
+                        {sourceMatchLabel(source)}
+                      </span>
+                    )}
                     <span className={`trust trust--${source.trust}`}>
                       {TRUST_LABEL[source.trust]}
                     </span>
@@ -1207,23 +1462,11 @@ function AnswerCard({
             </ol>
           )}
 
-          {data.warnings.length > 0 && (
-            <ul className="answer__warnings">
-              {data.warnings.map((warning, i) => (
-                <li key={i}>{warning}</li>
-              ))}
-            </ul>
+          {data.confidence !== 'none' && (
+            <p className="answer__foot">
+              {data.sources.length} source{data.sources.length === 1 ? '' : 's'}
+            </p>
           )}
-
-          <p className="answer__foot">
-            {data.synthesizer === 'extractive'
-              ? 'assembled from source extracts (no LLM configured)'
-              : `woven by ${data.synthesizer.replace('llm-', '')}`}
-            {' · '}
-            {data.sources.length} source{data.sources.length === 1 ? '' : 's'}
-            {' · '}
-            {Math.round(data.tookMs)} ms{data.cached ? ' · cached' : ''}
-          </p>
         </>
       )}
     </section>
@@ -1540,7 +1783,7 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
   );
 }
 
-function AboutView(): JSX.Element {
+function DocsView(): JSX.Element {
   return (
     <section className="prose">
       <h2>About Beacon Search</h2>
@@ -1552,12 +1795,13 @@ function AboutView(): JSX.Element {
       <h3>The universal box</h3>
       <p>
         The <em>Search</em> tab is a single input. Alongside the usual local-index search, Beacon
-        classifies what you typed and — when it recognises the shape — attaches a structured
-        result: a bare domain resolves DNS + RDAP registration data, an IP resolves reverse DNS +
-        RDAP network data, an arithmetic expression is evaluated directly, and <code>plate &lt;reg&gt;</code>{' '}
-        runs the number plate checker. Everything else is just a search. Domain/IP lookups need no
-        API key (DNS and RDAP are open internet infrastructure) but can be turned off entirely with{' '}
-        <code>BEACON_LOOKUPS_ENABLED=false</code> for a fully offline deployment.
+        classifies what you typed and — when it recognises the shape — attaches a structured result:
+        a bare domain resolves DNS + RDAP registration data, an IP resolves reverse DNS + RDAP
+        network data, an arithmetic expression is evaluated directly, and{' '}
+        <code>plate &lt;reg&gt;</code> runs the number plate checker. Everything else is just a
+        search. Domain/IP lookups need no API key (DNS and RDAP are open internet infrastructure)
+        but can be turned off entirely with <code>BEACON_LOOKUPS_ENABLED=false</code> for a fully
+        offline deployment.
       </p>
       <h3>API</h3>
       <ul>
@@ -1585,19 +1829,29 @@ function AboutView(): JSX.Element {
         <li>
           <code>GET /api/answer?q=…</code>
         </li>
+        <li>
+          <code>GET /api/settings</code> · <code>PATCH /api/settings</code> ·{' '}
+          <code>POST /api/settings/reset</code>
+        </li>
+        <li>
+          <code>GET /api/providers</code> · <code>POST /api/providers/:id/test</code>
+        </li>
+        <li>
+          <code>GET /api/diagnostics</code>
+        </li>
       </ul>
       <h3>Answers</h3>
       <p>
-        For question-like queries (and for a bare email address or a quoted name) the <em>Search</em>{' '}
-        tab also weaves a short written answer. It is built only from retrieved material — pages in
-        the index plus, when a web-search provider is configured, live pages fetched at query time
-        through the same robots / SSRF-guarded stack the crawler uses. Every sentence is tied to a
-        numbered source; each source carries a trust tier (official / established / unverified
-        reliability) and a fetch or index timestamp. Anything the sources do not support is labelled{' '}
-        <em>unverified</em>, and a confidence banner summarises how well-grounded the answer is. With
-        no LLM configured the answer is a deterministic weave of source extracts; with{' '}
-        <code>ANTHROPIC_API_KEY</code> (or an OpenAI-compatible endpoint) it is written up in prose.
-        All of it is optional.
+        For question-like queries (and for a bare email address or a quoted name) the{' '}
+        <em>Search</em> tab also weaves a short written answer. It is built only from retrieved
+        material — pages in the index plus, when a web-search provider is configured, live pages
+        fetched at query time through the same robots / SSRF-guarded stack the crawler uses. Every
+        sentence is tied to a numbered source; each source carries a trust tier (official /
+        established / unverified reliability) and a fetch or index timestamp. Anything the sources
+        do not support is labelled <em>unverified</em>, and a confidence banner summarises how
+        well-grounded the answer is. With no LLM configured the answer is a deterministic weave of
+        source extracts; with <code>ANTHROPIC_API_KEY</code> (or an OpenAI-compatible endpoint) it
+        is written up in prose. All of it is optional.
       </p>
       <h3>Number plate checker</h3>
       <p>
@@ -1616,67 +1870,889 @@ function AboutView(): JSX.Element {
   );
 }
 
-function SettingsView({
-  stats,
-  health,
+const SECTIONS: Array<[SettingSection, string]> = [
+  ['general', 'General'],
+  ['search', 'Search'],
+  ['sources', 'Sources'],
+  ['ai', 'AI & Answers'],
+  ['privacy', 'Privacy'],
+  ['advanced', 'Advanced'],
+];
+const SECTION_LABEL: Record<SettingSection, string> = Object.fromEntries(SECTIONS) as Record<
+  SettingSection,
+  string
+>;
+
+/** A client (localStorage) or server (/api/settings) setting, rendered from its registry metadata. */
+function SettingField({
+  def,
+  value,
+  onChange,
+  error,
+  pending,
 }: {
-  stats: IndexStats | null;
-  health: HealthResponse | null;
+  def: SettingDefinition;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  error?: string;
+  pending?: boolean;
 }): JSX.Element {
-  const answerStatus = health
-    ? health.answer.enabled
-      ? health.answer.llm.length > 0
-        ? `on · ${health.answer.llm.join(', ')}`
-        : 'on · extractive (no LLM key)'
-      : 'off'
-    : '—';
+  const id = `setting-${def.id}`;
+  return (
+    <div className={pending ? 'setting setting--pending' : 'setting'}>
+      <div className="setting__row">
+        <div className="setting__text">
+          <label htmlFor={id} className="setting__label">
+            {def.label}
+          </label>
+          {def.requiresRestart && <span className="setting__badge">restart required</span>}
+          {def.description && <p className="setting__desc">{def.description}</p>}
+        </div>
+        <div className="setting__control">
+          {def.type === 'toggle' && (
+            <input
+              id={id}
+              type="checkbox"
+              checked={Boolean(value)}
+              onChange={(e) => onChange(e.target.checked)}
+            />
+          )}
+          {def.type === 'select' && (
+            <select id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
+              {def.options?.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {def.type === 'number' && (
+            <input
+              id={id}
+              type="number"
+              value={String(value ?? '')}
+              min={def.min}
+              max={def.max}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          )}
+          {def.type === 'text' && (
+            <input
+              id={id}
+              type="text"
+              value={String(value ?? '')}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          )}
+        </div>
+      </div>
+      {error && <p className="setting__error">{error}</p>}
+    </div>
+  );
+}
+
+function coerceClientValue(def: SettingDefinition, raw: unknown): unknown {
+  return def.type === 'select' && typeof def.defaultValue === 'number' ? Number(raw) : raw;
+}
+
+function SettingsSection({
+  title,
+  section,
+  clientSettings,
+  serverSettings,
+  pendingServer,
+  serverErrors,
+  onServerChange,
+  onReset,
+}: {
+  title: string;
+  section: SettingSection;
+  clientSettings: ClientSettingsApi;
+  serverSettings: SettingsEntry[];
+  pendingServer: Record<string, boolean | number | string>;
+  serverErrors: Record<string, string>;
+  onServerChange: (def: SettingDefinition, value: unknown) => void;
+  onReset: () => void;
+}): JSX.Element {
+  const defs = settingsInSection(section);
+  return (
+    <section className="settings__section">
+      <div className="settings__section-head">
+        <h2>{title}</h2>
+        <button type="button" className="settings__restore" onClick={onReset}>
+          Restore defaults
+        </button>
+      </div>
+      <div className="settings__fields">
+        {defs.map((def) => {
+          if (def.scope === 'client') {
+            return (
+              <SettingField
+                key={def.id}
+                def={def}
+                value={clientSettings.values[def.id]}
+                onChange={(v) => clientSettings.setValue(def.id, coerceClientValue(def, v))}
+              />
+            );
+          }
+          const entry = serverSettings.find((e) => e.id === def.id);
+          if (!entry) return null;
+          const pendingVal = pendingServer[def.id];
+          const value = pendingVal !== undefined ? pendingVal : entry.value;
+          return (
+            <SettingField
+              key={def.id}
+              def={def}
+              value={value}
+              error={serverErrors[def.id]}
+              pending={pendingVal !== undefined}
+              onChange={(v) => onServerChange(def, v)}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+const PROVIDER_STATUS_LABEL: Record<ProviderStatus['status'], string> = {
+  connected: 'Connected',
+  available: 'Available',
+  disabled: 'Disabled',
+  not_configured: 'Not configured',
+  error: 'Error',
+};
+const PROVIDER_DOT_CLASS: Record<ProviderStatus['status'], string> = {
+  connected: 'dot--ok',
+  available: 'dot--ok',
+  disabled: 'dot--off',
+  not_configured: 'dot--warn',
+  error: 'dot--fail',
+};
+const PROVIDER_GROUP_LABEL: Record<ProviderStatus['group'], string> = {
+  web: 'Web',
+  network: 'Network',
+  vehicle: 'Vehicle data',
+  ai: 'Answers',
+};
+const PROVIDER_GROUPS: Array<ProviderStatus['group']> = ['web', 'network', 'vehicle', 'ai'];
+
+function SourcesSection({
+  providers,
+  onTested,
+}: {
+  providers: ProviderStatus[] | null;
+  onTested: () => void;
+}): JSX.Element {
+  const [testing, setTesting] = useState<string | null>(null);
+
+  const runTest = (id: string) => {
+    setTesting(id);
+    api
+      .testProvider(id)
+      .catch(() => {
+        /* the row's own status will show "error"; nothing more to surface here */
+      })
+      .finally(() => {
+        setTesting(null);
+        onTested();
+      });
+  };
+
+  return (
+    <section className="settings__section">
+      <h2>Sources</h2>
+      <p className="notice">
+        Every source Beacon can actually use right now, derived live from its configuration —
+        nothing here is hard-coded.
+      </p>
+      {!providers && <p className="notice">Loading…</p>}
+      {providers &&
+        PROVIDER_GROUPS.map((group) => {
+          const items = providers.filter((p) => p.group === group);
+          if (items.length === 0) return null;
+          return (
+            <div key={group} className="provider-group">
+              <h3>{PROVIDER_GROUP_LABEL[group]}</h3>
+              <ul className="provider-list">
+                {items.map((p) => (
+                  <li key={p.id} className="provider-row">
+                    <span className={`dot ${PROVIDER_DOT_CLASS[p.status]}`} aria-hidden />
+                    <div className="provider-row__text">
+                      <strong>{p.label}</strong>
+                      <span className="provider-row__detail">{p.detail}</span>
+                    </div>
+                    <span className="provider-row__status">{PROVIDER_STATUS_LABEL[p.status]}</span>
+                    {typeof p.latencyMs === 'number' && (
+                      <span className="provider-row__latency">{p.latencyMs} ms</span>
+                    )}
+                    {p.lastCheckedAt && (
+                      <span className="provider-row__checked">{relativeTime(p.lastCheckedAt)}</span>
+                    )}
+                    {p.testable && (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => runTest(p.id)}
+                        disabled={testing === p.id}
+                      >
+                        {testing === p.id ? 'Testing…' : 'Test connection'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+    </section>
+  );
+}
+
+function PrivacySection({
+  clientSettings,
+  serverSettings,
+  serverErrors,
+  onServerChange,
+  onReset,
+  historyCount,
+  onClearHistory,
+}: {
+  clientSettings: ClientSettingsApi;
+  serverSettings: SettingsEntry[];
+  serverErrors: Record<string, string>;
+  onServerChange: (def: SettingDefinition, value: unknown) => void;
+  onReset: () => void;
+  historyCount: number;
+  onClearHistory: () => void;
+}): JSX.Element {
+  const defs = settingsInSection('privacy');
+  return (
+    <section className="settings__section">
+      <div className="settings__section-head">
+        <h2>Privacy</h2>
+        <button type="button" className="settings__restore" onClick={onReset}>
+          Restore defaults
+        </button>
+      </div>
+      <div className="settings__fields">
+        {defs.map((def) => {
+          if (def.scope === 'client') {
+            return (
+              <SettingField
+                key={def.id}
+                def={def}
+                value={clientSettings.values[def.id]}
+                onChange={(v) => clientSettings.setValue(def.id, coerceClientValue(def, v))}
+              />
+            );
+          }
+          const entry = serverSettings.find((e) => e.id === def.id);
+          if (!entry) return null;
+          return (
+            <SettingField
+              key={def.id}
+              def={def}
+              value={entry.value}
+              error={serverErrors[def.id]}
+              onChange={(v) => onServerChange(def, v)}
+            />
+          );
+        })}
+      </div>
+
+      <div className="settings__history-action">
+        <span>
+          {historyCount} saved quer{historyCount === 1 ? 'y' : 'ies'} in this browser
+        </span>
+        <button
+          type="button"
+          className="btn btn--danger"
+          onClick={onClearHistory}
+          disabled={historyCount === 0}
+        >
+          Clear history
+        </button>
+      </div>
+
+      <div className="prose prose--compact">
+        <h3>What leaves this server</h3>
+        <ul>
+          <li>
+            A domain/IP typed into the search box goes to public DNS resolvers and RDAP registries —
+            no account, no key.
+          </li>
+          <li>
+            A question-like query, when answer generation is on and a web search provider is
+            configured, is sent to that provider, and the pages it returns are fetched directly.
+          </li>
+          <li>
+            A configured LLM (Anthropic, or an OpenAI-compatible endpoint) receives the retrieved
+            source extracts, not your raw query, to write the final answer.
+          </li>
+          <li>A plate check sends the registration to the DVLA/DVSA APIs, if configured.</li>
+          <li>Nothing else leaves this server. There is no analytics or telemetry in Beacon.</li>
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+const RANKING_IDS = ['answerTrustedDomains'];
+const NETWORK_IDS = ['lookupsTimeoutMs'];
+const CRAWL_IDS = [
+  'crawlMaxPages',
+  'crawlConcurrency',
+  'crawlTimeoutMs',
+  'crawlDelayMs',
+  'crawlAllowPrivateHosts',
+];
+const LOCAL_INDEX_IDS = ['persistDebounceMs'];
+const TIMEOUT_IDS = [
+  'plateTimeoutMs',
+  'answerFetchTimeoutMs',
+  'answerLlmTimeoutMs',
+  'rateLimitMax',
+  'rateLimitWindowMs',
+];
+const MASTER_IDS = ['answerEnabled'];
+
+function AdvancedSection({
+  serverSettings,
+  pendingServer,
+  serverErrors,
+  onServerChange,
+  onReset,
+  diagnostics,
+  onDocumentsChanged,
+}: {
+  serverSettings: SettingsEntry[];
+  pendingServer: Record<string, boolean | number | string>;
+  serverErrors: Record<string, string>;
+  onServerChange: (def: SettingDefinition, value: unknown) => void;
+  onReset: () => void;
+  diagnostics: DiagnosticsResponse | null;
+  onDocumentsChanged: () => void;
+}): JSX.Element {
+  const byIds = (ids: string[]) =>
+    ids
+      .map((id) => SERVER_SETTINGS.find((d) => d.id === id))
+      .filter((d): d is SettingDefinition => Boolean(d));
+
+  const field = (def: SettingDefinition) => {
+    const entry = serverSettings.find((e) => e.id === def.id);
+    if (!entry) return null;
+    const pendingVal = pendingServer[def.id];
+    const value = pendingVal !== undefined ? pendingVal : entry.value;
+    return (
+      <SettingField
+        key={def.id}
+        def={def}
+        value={value}
+        error={serverErrors[def.id]}
+        pending={pendingVal !== undefined}
+        onChange={(v) => onServerChange(def, v)}
+      />
+    );
+  };
+
+  return (
+    <section className="settings__section">
+      <div className="settings__section-head">
+        <h2>Advanced</h2>
+        <button type="button" className="settings__restore" onClick={onReset}>
+          Restore defaults
+        </button>
+      </div>
+      <p className="notice">
+        Developer-level configuration. Defaults are sensible — change these only if you know why.
+      </p>
+
+      <details className="settings__group">
+        <summary>Ranking</summary>
+        <div className="settings__fields">{byIds(RANKING_IDS).map(field)}</div>
+      </details>
+
+      <details className="settings__group">
+        <summary>Query classification</summary>
+        <p className="notice">
+          The universal box's classifier (domain / IP / calculation / plate / plain search) runs on
+          fixed rules — there is nothing to configure here yet.
+        </p>
+      </details>
+
+      <details className="settings__group">
+        <summary>Network lookups</summary>
+        <div className="settings__fields">{byIds(NETWORK_IDS).map(field)}</div>
+      </details>
+
+      <details className="settings__group">
+        <summary>Crawling</summary>
+        <div className="settings__fields">{byIds(CRAWL_IDS).map(field)}</div>
+      </details>
+
+      <details className="settings__group">
+        <summary>Local index</summary>
+        <div className="settings__fields">{byIds(LOCAL_INDEX_IDS).map(field)}</div>
+        <LibraryView onDone={onDocumentsChanged} />
+        <h3 className="settings__subhead">Number plate checker (advanced)</h3>
+        <PlateView onDone={onDocumentsChanged} />
+      </details>
+
+      <details className="settings__group">
+        <summary>Timeouts / retries</summary>
+        <div className="settings__fields">{byIds(TIMEOUT_IDS).map(field)}</div>
+      </details>
+
+      <details className="settings__group">
+        <summary>Answer engine (master switch)</summary>
+        <div className="settings__fields">{byIds(MASTER_IDS).map(field)}</div>
+      </details>
+
+      <details className="settings__group">
+        <summary>API</summary>
+        <ul className="settings__api-list">
+          <li>
+            <code>GET /api/search</code> · <code>GET /api/query</code> ·{' '}
+            <code>GET /api/suggest</code>
+          </li>
+          <li>
+            <code>GET/POST/PUT/DELETE /api/documents</code> · <code>POST /api/documents/bulk</code>
+          </li>
+          <li>
+            <code>POST /api/crawl</code> · <code>POST /api/index/clear</code>
+          </li>
+          <li>
+            <code>GET /api/plate/:reg</code> · <code>POST /api/plate/check</code>
+          </li>
+          <li>
+            <code>GET /api/answer</code>
+          </li>
+          <li>
+            <code>GET/PATCH /api/settings</code> · <code>POST /api/settings/reset</code>
+          </li>
+          <li>
+            <code>GET /api/providers</code> · <code>POST /api/providers/:id/test</code>
+          </li>
+          <li>
+            <code>GET /api/health</code> · <code>GET /api/diagnostics</code> ·{' '}
+            <code>GET /api/stats</code>
+          </li>
+        </ul>
+      </details>
+
+      <details className="settings__group">
+        <summary>MCP</summary>
+        <p className="notice">
+          <code>beacon-mcp</code> exposes the plate checker and the search index as tools for Claude
+          and other MCP clients. See the Docs tab for the CLI commands.
+        </p>
+      </details>
+
+      <details className="settings__group" open>
+        <summary>Diagnostics</summary>
+        {diagnostics ? (
+          <dl className="diagnostics">
+            <div>
+              <dt>Status</dt>
+              <dd>{diagnostics.status}</dd>
+            </div>
+            <div>
+              <dt>Uptime</dt>
+              <dd>{Math.round(diagnostics.uptimeSeconds / 60)}m</dd>
+            </div>
+            <div>
+              <dt>Last checked</dt>
+              <dd>{relativeTime(diagnostics.checkedAt)}</dd>
+            </div>
+            <div>
+              <dt>Documents</dt>
+              <dd>{diagnostics.documents.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Tags</dt>
+              <dd>{diagnostics.tags}</dd>
+            </div>
+            <div>
+              <dt>Sources (tag)</dt>
+              <dd>{diagnostics.sources}</dd>
+            </div>
+            <div>
+              <dt>Last persisted</dt>
+              <dd>
+                {diagnostics.lastPersistedAt ? relativeTime(diagnostics.lastPersistedAt) : 'never'}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="notice">Diagnostics unavailable.</p>
+        )}
+      </details>
+    </section>
+  );
+}
+
+const HEALTH_ROW_LABEL: Partial<Record<string, string>> = {
+  domain_lookups: 'DNS / RDAP',
+  dvla_vehicle: 'Vehicle data',
+};
+
+function HealthPanel({
+  diagnostics,
+  health,
+  onRefresh,
+  onSeeDetails,
+}: {
+  diagnostics: DiagnosticsResponse | null;
+  health: HealthResponse | null;
+  onRefresh: () => void;
+  onSeeDetails: () => void;
+}): JSX.Element {
+  const rows: Array<{ label: string; status: ProviderStatus['status']; detail: string }> = [
+    {
+      label: 'Search API',
+      status: diagnostics ? 'connected' : 'error',
+      detail: diagnostics ? 'Healthy' : 'Unreachable',
+    },
+    { label: 'Local index', status: 'connected', detail: 'Ready' },
+  ];
+
+  if (diagnostics) {
+    for (const p of diagnostics.providers) {
+      if (p.id === 'local_index' || p.id === 'crawler') continue;
+      if (p.id === 'answer_llm') {
+        const llmOn = Boolean(health && health.answer.llm.length > 0);
+        rows.push({
+          label: 'Answer engine',
+          status: llmOn ? 'connected' : health?.answer.enabled ? 'available' : 'disabled',
+          detail: llmOn
+            ? health!.answer.llm.join(', ')
+            : health?.answer.enabled
+              ? 'Extractive'
+              : 'Disabled',
+        });
+        continue;
+      }
+      const connectedDetail =
+        p.status === 'connected' && typeof p.latencyMs === 'number'
+          ? `Connected · ${p.latencyMs} ms`
+          : PROVIDER_STATUS_LABEL[p.status];
+      const label =
+        p.id === 'answer_web_search'
+          ? (health?.answer.webSearch ?? p.label)
+          : (HEALTH_ROW_LABEL[p.id] ?? p.label);
+      rows.push({ label, status: p.status, detail: connectedDetail });
+    }
+  }
+
+  return (
+    <section className="health">
+      <div className="health__head">
+        <h2>System health</h2>
+        <div className="health__actions">
+          <button type="button" className="search__filters-toggle" onClick={onRefresh}>
+            refresh
+          </button>
+          <button type="button" className="search__filters-toggle" onClick={onSeeDetails}>
+            detailed diagnostics
+          </button>
+        </div>
+      </div>
+      <ul className="health__list">
+        {rows.map((r) => (
+          <li key={r.label}>
+            <span className={`dot ${PROVIDER_DOT_CLASS[r.status]}`} aria-hidden />
+            <span className="health__label">{r.label}</span>
+            <span className="health__detail">{r.detail}</span>
+          </li>
+        ))}
+      </ul>
+      {diagnostics && (
+        <p className="health__foot">
+          Uptime {Math.round(diagnostics.uptimeSeconds / 60)}m · checked{' '}
+          {relativeTime(diagnostics.checkedAt)}
+          {health ? ` · ${health.documents.toLocaleString()} documents` : ''}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function SettingsView({
+  health,
+  onSettingsChanged,
+  clientSettings,
+  historyCount,
+  onClearHistory,
+}: {
+  health: HealthResponse | null;
+  onSettingsChanged: () => void;
+  clientSettings: ClientSettingsApi;
+  historyCount: number;
+  onClearHistory: () => void;
+}): JSX.Element {
+  const [section, setSection] = useState<SettingSection>('general');
+  const [serverSettings, setServerSettings] = useState<SettingsEntry[]>([]);
+  const [pendingServer, setPendingServer] = useState<Record<string, boolean | number | string>>({});
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  const [settingsQuery, setSettingsQuery] = useState('');
+
+  const refreshSettings = useCallback(() => {
+    api
+      .settings()
+      .then((res) => setServerSettings(res.settings))
+      .catch(() => {
+        /* leave the previous list in place — the fields just won't update */
+      });
+  }, []);
+  useEffect(refreshSettings, [refreshSettings]);
+
+  const refreshDiagnostics = useCallback(() => {
+    api
+      .diagnostics()
+      .then(setDiagnostics)
+      .catch(() => setDiagnostics(null));
+  }, []);
+  useEffect(refreshDiagnostics, [refreshDiagnostics]);
+
+  const refreshProviders = useCallback(() => {
+    api
+      .providers()
+      .then((res) => setProviders(res.providers))
+      .catch(() => setProviders(null));
+  }, []);
+  useEffect(refreshProviders, [refreshProviders]);
+
+  const refreshAll = () => {
+    refreshDiagnostics();
+    refreshProviders();
+  };
+
+  const handleServerChange = (def: SettingDefinition, raw: unknown) => {
+    setServerErrors((prev) => {
+      if (!(def.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[def.id];
+      return next;
+    });
+    if (def.type === 'toggle' || def.type === 'select') {
+      const value = def.type === 'toggle' ? Boolean(raw) : String(raw);
+      api
+        .patchSettings({ [def.id]: value })
+        .then((res) => {
+          setServerSettings(res.settings);
+          const fieldError = res.errors[def.id];
+          if (fieldError) setServerErrors((prev) => ({ ...prev, [def.id]: fieldError }));
+          onSettingsChanged();
+        })
+        .catch((err: unknown) =>
+          setServerErrors((prev) => ({
+            ...prev,
+            [def.id]: err instanceof Error ? err.message : 'Failed to save',
+          })),
+        );
+    } else {
+      setPendingServer((prev) => ({ ...prev, [def.id]: raw as string }));
+    }
+  };
+
+  const saveChanges = () => {
+    setSaving(true);
+    const patch: Record<string, boolean | number | string> = {};
+    for (const [id, raw] of Object.entries(pendingServer)) {
+      const def = SERVER_SETTINGS.find((d) => d.id === id);
+      patch[id] = def?.type === 'number' ? Number(raw) : raw;
+    }
+    api
+      .patchSettings(patch)
+      .then((res) => {
+        setServerSettings(res.settings);
+        setServerErrors(res.errors);
+        setPendingServer((prev) => {
+          const next = { ...prev };
+          for (const id of res.applied) delete next[id];
+          return next;
+        });
+        onSettingsChanged();
+      })
+      .catch(() => {
+        /* network-level failure — the pending edits stay so the user can retry */
+      })
+      .finally(() => setSaving(false));
+  };
+
+  const discardChanges = () => {
+    setPendingServer({});
+    setServerErrors({});
+  };
+
+  const resetSection = (target: SettingSection) => {
+    const defs = settingsInSection(target);
+    const clientIds = defs.filter((d) => d.scope === 'client').map((d) => d.id);
+    const serverIds = defs.filter((d) => d.scope === 'server').map((d) => d.id);
+    if (clientIds.length > 0) clientSettings.resetIds(clientIds);
+    if (serverIds.length > 0) {
+      api
+        .resetSettings(serverIds)
+        .then((res) => {
+          setServerSettings(res.settings);
+          setPendingServer((prev) => {
+            const next = { ...prev };
+            for (const id of serverIds) delete next[id];
+            return next;
+          });
+          setServerErrors((prev) => {
+            const next = { ...prev };
+            for (const id of serverIds) delete next[id];
+            return next;
+          });
+          onSettingsChanged();
+        })
+        .catch(() => {
+          /* leave things as they were — nothing was reset */
+        });
+    }
+  };
+
+  const pendingCount = Object.keys(pendingServer).length;
+  const foundSettings = settingsQuery.trim() ? searchSettings(settingsQuery) : [];
 
   return (
     <section className="settings">
-      <section className="settings__section">
-        <h2>Diagnostics</h2>
-        <dl className="diagnostics">
-          <div>
-            <dt>Documents</dt>
-            <dd>{stats ? stats.documents.toLocaleString() : '—'}</dd>
-          </div>
-          <div>
-            <dt>Tags / sources</dt>
-            <dd>{stats ? `${stats.tags} / ${stats.sources}` : '—'}</dd>
-          </div>
-          <div>
-            <dt>Uptime</dt>
-            <dd>{health ? `${Math.round(health.uptimeSeconds / 60)}m` : '—'}</dd>
-          </div>
-          <div>
-            <dt>Answer weave</dt>
-            <dd>{answerStatus}</dd>
-          </div>
-          <div>
-            <dt>Web search provider</dt>
-            <dd>{health?.answer.webSearch ?? 'none configured'}</dd>
-          </div>
-          <div>
-            <dt>Domain / IP lookups</dt>
-            <dd>{health ? (health.lookups.enabled ? 'enabled' : 'disabled') : '—'}</dd>
-          </div>
-          <div>
-            <dt>DVLA vehicle data</dt>
-            <dd>{health ? (health.plateChecks.vehicleData ? 'configured' : 'not configured') : '—'}</dd>
-          </div>
-          <div>
-            <dt>DVSA MOT history</dt>
-            <dd>{health ? (health.plateChecks.motHistory ? 'configured' : 'not configured') : '—'}</dd>
-          </div>
-        </dl>
-      </section>
+      <HealthPanel
+        diagnostics={diagnostics}
+        health={health}
+        onRefresh={refreshAll}
+        onSeeDetails={() => setSection('advanced')}
+      />
 
-      <details className="settings__tool">
-        <summary>Number plate checker (advanced)</summary>
-        <PlateView onDone={() => {}} />
-      </details>
+      <div className="settings__search">
+        <input
+          type="search"
+          placeholder="Search settings…"
+          value={settingsQuery}
+          onChange={(e) => setSettingsQuery(e.target.value)}
+        />
+        {settingsQuery.trim() && (
+          <ul className="settings__search-results">
+            {foundSettings.length === 0 && (
+              <li className="settings__search-empty">No matching settings.</li>
+            )}
+            {foundSettings.map((def) => (
+              <li key={def.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSection(def.section);
+                    setSettingsQuery('');
+                  }}
+                >
+                  {def.label}{' '}
+                  <span className="settings__search-section">{SECTION_LABEL[def.section]}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-      <AboutView />
+      <div className="settings__layout">
+        <nav className="settings__nav" aria-label="Settings sections">
+          {SECTIONS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={
+                section === id ? 'settings__nav-btn settings__nav-btn--active' : 'settings__nav-btn'
+              }
+              onClick={() => setSection(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings__panel">
+          {section === 'general' && (
+            <SettingsSection
+              title="General"
+              section="general"
+              clientSettings={clientSettings}
+              serverSettings={serverSettings}
+              pendingServer={pendingServer}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+              onReset={() => resetSection('general')}
+            />
+          )}
+          {section === 'search' && (
+            <SettingsSection
+              title="Search"
+              section="search"
+              clientSettings={clientSettings}
+              serverSettings={serverSettings}
+              pendingServer={pendingServer}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+              onReset={() => resetSection('search')}
+            />
+          )}
+          {section === 'sources' && (
+            <SourcesSection providers={providers} onTested={refreshProviders} />
+          )}
+          {section === 'ai' && (
+            <SettingsSection
+              title="AI & Answers"
+              section="ai"
+              clientSettings={clientSettings}
+              serverSettings={serverSettings}
+              pendingServer={pendingServer}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+              onReset={() => resetSection('ai')}
+            />
+          )}
+          {section === 'privacy' && (
+            <PrivacySection
+              clientSettings={clientSettings}
+              serverSettings={serverSettings}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+              onReset={() => resetSection('privacy')}
+              historyCount={historyCount}
+              onClearHistory={onClearHistory}
+            />
+          )}
+          {section === 'advanced' && (
+            <AdvancedSection
+              serverSettings={serverSettings}
+              pendingServer={pendingServer}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+              onReset={() => resetSection('advanced')}
+              diagnostics={diagnostics}
+              onDocumentsChanged={refreshAll}
+            />
+          )}
+        </div>
+      </div>
+
+      {pendingCount > 0 && (
+        <div className="settings__unsaved" role="status">
+          <span>
+            {pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}
+          </span>
+          <button type="button" className="btn" onClick={discardChanges} disabled={saving}>
+            Discard
+          </button>
+          <button type="button" className="btn btn--active" onClick={saveChanges} disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

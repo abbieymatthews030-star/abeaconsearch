@@ -8,6 +8,7 @@ import { createAnswerService } from '../core/answer/index.js';
 import type { Config } from '../core/config.js';
 import { createLogger, type Logger } from '../core/logger.js';
 import { createPlateChecker } from '../core/plate/index.js';
+import { RuntimeSettingsStore } from '../core/runtime-settings.js';
 import { PersistentEngine } from '../core/store.js';
 import { apiRoutes, healthPayload, registerErrorHandler, type RouteContext } from './routes.js';
 
@@ -15,6 +16,7 @@ export interface BuildAppOptions {
   config: Config;
   engine?: PersistentEngine;
   logger?: Logger;
+  settings?: RuntimeSettingsStore;
 }
 
 const PLACEHOLDER_PAGE = `<!doctype html>
@@ -45,6 +47,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       logger,
     });
 
+  // Load any persisted settings overrides before anything reads `config` —
+  // it mutates `config` (and its nested objects) in place, so every service
+  // built below, and the rate-limit plugin registered next, sees the
+  // user's saved values rather than the raw environment defaults.
+  const settings =
+    options.settings ??
+    new RuntimeSettingsStore({
+      file: path.join(config.dataDir, 'settings.json'),
+      config,
+      logger,
+    });
+  await settings.load();
+
   const quietRequests = config.logLevel !== 'debug' && config.logLevel !== 'trace';
   const app = Fastify({
     loggerInstance: logger as FastifyBaseLogger,
@@ -66,6 +81,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const ctx: RouteContext = {
     config,
     engine,
+    settings,
     plateChecker: createPlateChecker(config),
     answerService: createAnswerService(config, { engine, logger }),
   };
