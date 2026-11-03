@@ -34,6 +34,8 @@ export interface RetrievedSource extends SourceEvidence {
 export interface EngineLike {
   search(query: SearchQuery, options?: { combineWith?: 'AND' | 'OR' }): SearchResponse;
   get(id: string): BeaconDocument | undefined;
+  /** Present on the real engine. Used to resolve pinned result URLs back to index documents. */
+  list?(): BeaconDocument[];
 }
 
 export interface GatherDeps {
@@ -44,6 +46,11 @@ export interface GatherDeps {
   fetchImpl?: typeof fetch;
   logger?: Logger;
   signal?: AbortSignal;
+  /**
+   * URLs from the search the reader is looking at. When set, those documents
+   * are the only sources — a second web search is not run.
+   */
+  pinUrls?: string[];
 }
 
 export interface GatherResult {
@@ -99,6 +106,35 @@ function domainOf(url: string | undefined): string | undefined {
   }
 }
 
+function sourceFromDocument(
+  query: string,
+  doc: BeaconDocument,
+  deps: GatherDeps,
+): RetrievedSource | null {
+  const text = stripLeadingNavList(normalizeWhitespace(doc.body)).slice(0, MAX_SOURCE_CHARS);
+  if (!text) return null;
+  const trust = classifyTrust(doc.url, 'index', deps.config.trustedDomains);
+  return {
+    id: 0,
+    title: doc.title,
+    url: doc.url,
+    origin: 'index',
+    domain: domainOf(doc.url),
+    trust: trust.tier,
+    trustReason: trust.reason,
+    live: false,
+    retrievedAt: doc.updatedAt,
+    text,
+    ...evaluateSource(query, doc.title, text, trust.tier),
+  };
+}
+
+function docByUrl(engine: EngineLike, url: string): BeaconDocument | undefined {
+  if (!engine.list) return undefined;
+  const want = canonicalUrl(url);
+  return engine.list().find((doc) => doc.url && canonicalUrl(doc.url) === want);
+}
+
 function fromIndex(query: string, deps: GatherDeps, limit: number): RetrievedSource[] {
   const parsed = searchQuerySchema.parse({ q: query, limit });
   // OR-combine: a natural-language question ("where do penguins live") rarely has
@@ -110,24 +146,46 @@ function fromIndex(query: string, deps: GatherDeps, limit: number): RetrievedSou
     const doc = deps.engine.get(hit.id);
     if (!doc) continue;
     if (!isRelevantLocalHit(query, doc, { fuzzy: true, prefix: true, intent })) continue;
-    const text = stripLeadingNavList(normalizeWhitespace(doc.body)).slice(0, MAX_SOURCE_CHARS);
-    if (!text) continue;
-    const trust = classifyTrust(doc.url, 'index', deps.config.trustedDomains);
-    out.push({
-      id: 0,
-      title: doc.title,
-      url: doc.url,
-      origin: 'index',
-      domain: domainOf(doc.url),
-      trust: trust.tier,
-      trustReason: trust.reason,
-      live: false,
-      retrievedAt: doc.updatedAt,
-      text,
-      ...evaluateSource(query, doc.title, text, trust.tier),
-    });
+    const source = sourceFromDocument(query, doc, deps);
+    if (source) out.push(source);
   }
   return out;
+}
+
+/**
+ * Cite exactly the pages the reader already has in the result list. Index
+ * documents are used as stored; anything else is fetched once.
+ */
+async function gatherPinned(
+  query: string,
+  urls: string[],
+  deps: GatherDeps,
+): Promise<GatherResult> {
+  const warnings: string[] = [];
+  const sources: RetrievedSource[] = [];
+  const seen = new Set<string>();
+  const robotsCache = new Map<string, RobotsRules>();
+  for (const raw of urls) {
+    const key = canonicalUrl(raw);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const doc = docByUrl(deps.engine, raw);
+    if (doc) {
+      const source = sourceFromDocument(query, doc, deps);
+      if (source) sources.push(source);
+      else warnings.push(`indexed page had no readable text: ${raw}`);
+      continue;
+    }
+    const fetched = await fetchWebPage(query, { title: raw, url: raw }, deps, robotsCache);
+    if ('error' in fetched) warnings.push(`${raw}: ${fetched.error}`);
+    else sources.push(fetched);
+  }
+  return {
+    sources: sources
+      .slice(0, deps.config.maxSources)
+      .map((source, i) => ({ ...source, id: i + 1 })),
+    warnings,
+  };
 }
 
 async function fetchWebPage(
@@ -200,6 +258,8 @@ async function fetchWebPage(
  * robots / SSRF-guard / timeout stack the crawler uses.
  */
 export async function gatherSources(query: string, deps: GatherDeps): Promise<GatherResult> {
+  if (deps.pinUrls && deps.pinUrls.length > 0) return gatherPinned(query, deps.pinUrls, deps);
+
   const warnings: string[] = [];
   const { config } = deps;
 

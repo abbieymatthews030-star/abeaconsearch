@@ -1,13 +1,10 @@
-// Central metadata for every setting shown in Settings — both the ones that
-// only ever live in this browser (General/most of Search/most of Privacy)
-// and the ones backed by the server (GET/PATCH /api/settings). This file
-// renders the controls, supplies defaults, and drives reset-to-default and
-// the settings search box; it does not itself store values — client-scoped
-// values live in `useClientSettings` (localStorage), server-scoped values
-// come from `/api/settings` and are edited through the same endpoint.
+// Browser-only settings. Server settings are not copied here: the Settings
+// screen renders them from GET /api/settings (label, type, min, max, section,
+// requiresRestart). This file supplies defaults for the local prefs and the
+// small amount of placement the API section enum cannot express.
 
-// 'sources' has no registry entries of its own — that section renders live
-// from GET /api/providers instead — but it's still a real navigable section.
+// 'sources' renders live from GET /api/settings (section "sources") plus
+// GET /api/providers.
 export type SettingSection = 'general' | 'search' | 'sources' | 'ai' | 'privacy' | 'advanced';
 export type SettingType = 'toggle' | 'select' | 'text' | 'number';
 
@@ -40,7 +37,8 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     id: 'region',
     section: 'general',
     label: 'Region',
-    description: 'Used to format dates/numbers in the interface. Does not change which data sources are used.',
+    description:
+      'Used to format dates/numbers in the interface. Does not change which data sources are used.',
     type: 'select',
     scope: 'client',
     defaultValue: 'AU',
@@ -50,16 +48,6 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
       { value: 'US', label: 'United States' },
       { value: 'other', label: 'Other' },
     ],
-  },
-  {
-    id: 'language',
-    section: 'general',
-    label: 'Language',
-    description: 'Interface language. Only English is available today.',
-    type: 'select',
-    scope: 'client',
-    defaultValue: 'en',
-    options: [{ value: 'en', label: 'English' }],
   },
   {
     id: 'resultsPerPage',
@@ -123,7 +111,8 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     id: 'queryExpansion',
     section: 'search',
     label: 'Query expansion',
-    description: 'When no result matches every word, show the closest partial match instead of nothing.',
+    description:
+      'When no result matches every word, show the closest partial match instead of nothing.',
     type: 'toggle',
     scope: 'client',
     defaultValue: true,
@@ -133,6 +122,16 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     section: 'search',
     label: 'Typo correction',
     description: 'Allow fuzzy matching for close misspellings.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: true,
+  },
+  {
+    id: 'prefixMatch',
+    section: 'search',
+    label: 'Match word prefixes',
+    description:
+      'Treat the start of a word as a match, so searching “perform” can find “performance”.',
     type: 'toggle',
     scope: 'client',
     defaultValue: true,
@@ -172,229 +171,94 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
 ];
 
 /**
- * Server-backed settings, matching `RUNTIME_SETTINGS` in
- * `src/core/runtime-settings.ts` by id. Kept as a separate, hand-maintained
- * list rather than a shared import: the frontend bundle only ever pulls in
- * `@core` types (erased at build time), never backend runtime code, so the
- * two sides describe the same ~19 fields independently. Labels/descriptions
- * here are the user-facing wording; the backend's are the technical ones
- * shown in its own API responses.
+ * Sections a server setting should also appear in. The API's own `section`
+ * is the primary place. Keys must be `RUNTIME_SETTINGS` ids.
  */
-export const SERVER_SETTINGS: SettingDefinition[] = [
-  {
-    id: 'answerAutoAnswer',
-    section: 'ai',
-    alsoShowIn: ['search'],
-    label: 'Generate answers from search results',
-    description: 'Automatically weave a cited answer for question-like queries.',
-    type: 'toggle',
-    scope: 'server',
-  },
-  {
-    id: 'answerMaxSources',
-    section: 'ai',
-    label: 'Maximum sources',
-    description: 'How many sources a single answer can cite. Higher values scrape more pages per answer.',
-    type: 'number',
-    scope: 'server',
-    min: 1,
-    max: 50,
-  },
-  {
-    id: 'answerPreferredLlm',
-    section: 'ai',
-    label: 'Preferred model',
-    description: 'Which configured model to try first when more than one is set up.',
-    type: 'select',
-    scope: 'server',
-    options: [
-      { value: '', label: 'Automatic' },
-      { value: 'anthropic', label: 'Anthropic' },
-      { value: 'openai', label: 'OpenAI-compatible' },
-    ],
-  },
-  {
-    id: 'lookupsEnabled',
-    section: 'advanced',
-    label: 'Domain / IP lookups',
-    description: 'Resolve DNS + RDAP data for a bare domain or IP typed into the search box.',
-    type: 'toggle',
-    scope: 'server',
-  },
-  {
-    id: 'plateIndexResults',
-    section: 'advanced',
-    label: 'Save plate checks to the index',
-    type: 'toggle',
-    scope: 'server',
-  },
-  {
-    id: 'answerStripTrackingParams',
-    section: 'privacy',
-    label: 'Strip tracking parameters',
-    description: 'Remove utm_*/fbclid/gclid-style tracking params from cited web URLs.',
-    type: 'toggle',
-    scope: 'server',
-  },
-  {
-    id: 'answerEnabled',
-    section: 'advanced',
-    label: 'Answer engine (master switch)',
-    description: 'Disables GET /api/answer entirely. Turning it back on after a cold start needs a restart.',
-    type: 'toggle',
-    scope: 'server',
-    advanced: true,
-    requiresRestart: true,
-  },
-  {
-    id: 'lookupsTimeoutMs',
-    section: 'advanced',
-    label: 'Lookup timeout (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1000,
-    max: 30000,
-  },
-  {
-    id: 'answerTrustedDomains',
-    section: 'advanced',
-    label: 'Extra trusted domains',
-    description: 'Comma-separated domains promoted to the "official" trust tier.',
-    type: 'text',
-    scope: 'server',
-    advanced: true,
-  },
-  {
-    id: 'crawlMaxPages',
-    section: 'advanced',
-    label: 'Max pages per crawl',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1,
-    max: 5000,
-  },
-  {
-    id: 'crawlConcurrency',
-    section: 'advanced',
-    label: 'Crawl concurrency',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1,
-    max: 32,
-  },
-  {
-    id: 'crawlTimeoutMs',
-    section: 'advanced',
-    label: 'Crawl page timeout (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1000,
-    max: 60000,
-  },
-  {
-    id: 'crawlDelayMs',
-    section: 'advanced',
-    label: 'Crawl delay (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 0,
-    max: 10000,
-  },
-  {
-    id: 'crawlAllowPrivateHosts',
-    section: 'advanced',
-    label: 'Allow crawling private hosts',
-    description: 'Off is the safe default (SSRF guard).',
-    type: 'toggle',
-    scope: 'server',
-    advanced: true,
-  },
-  {
-    id: 'plateTimeoutMs',
-    section: 'advanced',
-    label: 'Vehicle data timeout (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    requiresRestart: true,
-    min: 1000,
-    max: 30000,
-  },
-  {
-    id: 'answerFetchTimeoutMs',
-    section: 'advanced',
-    label: 'Source fetch timeout (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1000,
-    max: 30000,
-  },
-  {
-    id: 'answerLlmTimeoutMs',
-    section: 'advanced',
-    label: 'Model timeout (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    min: 1000,
-    max: 120000,
-  },
-  {
-    id: 'rateLimitMax',
-    section: 'advanced',
-    label: 'Rate limit (requests)',
-    description: '0 disables it.',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    requiresRestart: true,
-    min: 0,
-    max: 100000,
-  },
-  {
-    id: 'rateLimitWindowMs',
-    section: 'advanced',
-    label: 'Rate limit window (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    requiresRestart: true,
-    min: 1000,
-    max: 3600000,
-  },
-  {
-    id: 'persistDebounceMs',
-    section: 'advanced',
-    label: 'Index save delay (ms)',
-    type: 'number',
-    scope: 'server',
-    advanced: true,
-    requiresRestart: true,
-    min: 0,
-    max: 60000,
-  },
-];
+export const SERVER_ALSO_SHOW: Partial<Record<string, SettingSection[]>> = {
+  answerAutoAnswer: ['search'],
+};
 
-export const ALL_SETTINGS: SettingDefinition[] = [...CLIENT_SETTINGS, ...SERVER_SETTINGS];
-
-export function settingsInSection(section: SettingSection): SettingDefinition[] {
-  return ALL_SETTINGS.filter((d) => d.section === section || d.alsoShowIn?.includes(section));
+export interface ServerSettingEntry {
+  id: string;
+  label: string;
+  description: string;
+  type: 'toggle' | 'number' | 'text';
+  section: 'sources' | 'ai' | 'advanced';
+  advanced: boolean;
+  requiresRestart: boolean;
+  min?: number;
+  max?: number;
+  value: boolean | number | string;
 }
 
-/** Case-insensitive match against a setting's id/label/description — powers the "Search settings…" box. */
-export function searchSettings(query: string): SettingDefinition[] {
+/** Preferred-model choices built from the providers `/health` says are configured. */
+export function preferredModelOptions(llmNames: readonly string[]): SettingOption[] {
+  const options: SettingOption[] = [{ value: '', label: 'Automatic' }];
+  for (const name of llmNames) {
+    if (/anthropic/i.test(name) && !options.some((o) => o.value === 'anthropic')) {
+      options.push({ value: 'anthropic', label: name });
+    } else if (/openai/i.test(name) && !options.some((o) => o.value === 'openai')) {
+      options.push({ value: 'openai', label: name });
+    }
+  }
+  return options;
+}
+
+/** Turn one GET /api/settings row into the control the Settings screen renders. */
+export function serverEntryToDefinition(
+  entry: ServerSettingEntry,
+  llmNames: readonly string[] = [],
+): SettingDefinition {
+  const section: SettingSection =
+    entry.section === 'sources' || entry.section === 'ai' || entry.section === 'advanced'
+      ? entry.section
+      : 'advanced';
+  const preferred = entry.id === 'answerPreferredLlm';
+  const options = preferred ? preferredModelOptions(llmNames) : undefined;
+  if (preferred && options) {
+    const current = String(entry.value ?? '');
+    if (current && !options.some((option) => option.value === current)) {
+      options.push({ value: current, label: current });
+    }
+  }
+  return {
+    id: entry.id,
+    section,
+    alsoShowIn: SERVER_ALSO_SHOW[entry.id],
+    label: entry.label,
+    description: entry.description,
+    type: preferred ? 'select' : entry.type,
+    scope: 'server',
+    options,
+    min: entry.min,
+    max: entry.max,
+    advanced: entry.advanced,
+    requiresRestart: entry.requiresRestart,
+  };
+}
+
+export function inSection(def: SettingDefinition, section: SettingSection): boolean {
+  return def.section === section || Boolean(def.alsoShowIn?.includes(section));
+}
+
+export function clientSettingsInSection(section: SettingSection): SettingDefinition[] {
+  return CLIENT_SETTINGS.filter((d) => inSection(d, section));
+}
+
+function matchesQuery(def: SettingDefinition, q: string): boolean {
+  return (
+    def.label.toLowerCase().includes(q) ||
+    Boolean(def.description?.toLowerCase().includes(q)) ||
+    def.id.toLowerCase().includes(q)
+  );
+}
+
+/** Case-insensitive match against client settings plus the live server rows. */
+export function searchSettings(
+  query: string,
+  server: SettingDefinition[] = [],
+): SettingDefinition[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  return ALL_SETTINGS.filter(
-    (d) =>
-      d.label.toLowerCase().includes(q) ||
-      d.description?.toLowerCase().includes(q) ||
-      d.id.toLowerCase().includes(q),
-  );
+  return [...CLIENT_SETTINGS, ...server].filter((d) => matchesQuery(d, q));
 }

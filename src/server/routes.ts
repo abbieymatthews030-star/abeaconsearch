@@ -118,8 +118,20 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       return engine.search(query);
     });
 
+    const webModeSchema = z
+      .union([z.boolean(), z.string()])
+      .optional()
+      .transform((v): 'auto' | 'off' | 'force' => {
+        if (v === undefined) return 'auto';
+        if (typeof v === 'boolean') return v ? 'auto' : 'off';
+        const s = v.trim().toLowerCase();
+        if (s === 'force') return 'force';
+        if (s === 'false' || s === '0' || s === 'no' || s === 'off' || s === '') return 'off';
+        return 'auto';
+      });
+
     const universalQuerySchema = searchQuerySchema.extend({
-      web: booleanParam(true),
+      web: webModeSchema,
     });
 
     // --- Universal query ------------------------------------------------------
@@ -185,7 +197,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
           search: query,
           engine,
           config: config.answer,
-          includeWeb: query.web,
+          web: query.web,
         }),
         primaryPromise,
       ]);
@@ -202,8 +214,8 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       if (!ctx.answerService || !config.answer.enabled) {
         throw new HttpError(404, 'answer synthesis is disabled');
       }
-      const { q, fresh } = answerQuerySchema.parse(request.query);
-      return ctx.answerService.answer(q, { fresh });
+      const { q, fresh, urls } = answerQuerySchema.parse(request.query);
+      return ctx.answerService.answer(q, { fresh, urls });
     });
 
     // --- Settings ---------------------------------------------------------

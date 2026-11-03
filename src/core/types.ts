@@ -85,10 +85,20 @@ export interface SuggestResponse {
   suggestions: string[];
 }
 
+const answerUrlSchema = z.string().trim().url().max(2048);
+
 export const answerQuerySchema = z.object({
   q: z.string().trim().min(2).max(1024),
   /** Bypass the short-lived answer cache. */
   fresh: booleanParam(false),
+  /**
+   * Result URLs from the search the reader is looking at. When present, the
+   * answer cites these documents instead of running a second retrieval.
+   */
+  urls: z
+    .union([answerUrlSchema, z.array(answerUrlSchema).max(20)])
+    .optional()
+    .transform((v) => (v === undefined ? [] : Array.isArray(v) ? v : [v])),
 });
 export type AnswerQuery = z.infer<typeof answerQuerySchema>;
 

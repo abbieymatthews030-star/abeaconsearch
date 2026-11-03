@@ -34,6 +34,8 @@ export interface DisplayHit {
   provider: string;
   score: number;
   tags: string[];
+  /** Index `updatedAt`, when this hit came from a stored document. Absent for live web hits. */
+  updatedAt?: string;
 }
 
 export interface SearchDiagnostic {

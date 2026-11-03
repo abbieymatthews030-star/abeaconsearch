@@ -115,6 +115,23 @@ export interface DocumentsResponse {
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 
+function errorMessage(payload: unknown, status: number): string {
+  if (!payload || typeof payload !== 'object') return `Request failed with ${status}`;
+  const body = payload as { message?: unknown; issues?: unknown };
+  const message = typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
+  if (!Array.isArray(body.issues) || body.issues.length === 0) return message;
+  const parts = body.issues
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object') return '';
+      const row = issue as { path?: unknown; message?: unknown };
+      const path = typeof row.path === 'string' && row.path ? row.path : '';
+      const detail = typeof row.message === 'string' ? row.message : '';
+      return [path, detail].filter(Boolean).join(': ');
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? `${message} ${parts.join('; ')}` : message;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
@@ -123,11 +140,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const payload = text ? (JSON.parse(text) as unknown) : null;
   if (!response.ok) {
-    const message =
-      payload && typeof payload === 'object' && 'message' in payload
-        ? String((payload as { message: unknown }).message)
-        : `Request failed with ${response.status}`;
-    throw new Error(message);
+    throw new Error(errorMessage(payload, response.status));
   }
   return payload as T;
 }
@@ -145,6 +158,10 @@ export interface SearchParams {
   allowPartialMatch?: boolean;
   /** Fuzzy (typo-tolerant) matching. Default true. */
   fuzzy?: boolean;
+  /** Prefix matching. Default true. Send false to require whole tokens. */
+  prefix?: boolean;
+  /** `force` runs web search even when the local index already matched. */
+  web?: 'force' | 'off';
 }
 
 function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
@@ -155,6 +172,8 @@ function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
   if (params.combineWith) qs.set('combineWith', params.combineWith);
   if (params.allowPartialMatch === false) qs.set('allowPartialMatch', 'false');
   if (params.fuzzy === false) qs.set('fuzzy', 'false');
+  if (params.prefix === false) qs.set('prefix', 'false');
+  if (params.web) qs.set('web', params.web);
   for (const tag of params.tags ?? []) qs.append('tags', tag);
 }
 
@@ -191,12 +210,22 @@ export const api = {
   health(): Promise<HealthResponse> {
     return request<HealthResponse>('/api/health');
   },
-  answer(q: string, fresh: boolean, signal?: AbortSignal): Promise<AnswerResponse> {
+  answer(
+    q: string,
+    fresh: boolean,
+    signal?: AbortSignal,
+    urls?: string[],
+  ): Promise<AnswerResponse> {
     const qs = new URLSearchParams({ q });
     if (fresh) qs.set('fresh', 'true');
+    for (const url of urls ?? []) qs.append('urls', url);
     return request<AnswerResponse>(`/api/answer?${qs.toString()}`, { signal });
   },
+  document(id: string): Promise<BeaconDocument> {
+    return request<BeaconDocument>(`/api/documents/${encodeURIComponent(id)}`);
+  },
   addDocument(doc: {
+    id?: string;
     title: string;
     body: string;
     url?: string;
@@ -208,10 +237,30 @@ export const api = {
       body: JSON.stringify(doc),
     });
   },
+  updateDocument(
+    id: string,
+    doc: { title: string; body: string; url?: string; tags: string[]; source?: string },
+  ): Promise<BeaconDocument> {
+    return request<BeaconDocument>(`/api/documents/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(doc),
+    });
+  },
+  bulkImport(documents: unknown[]): Promise<{ indexed: number; ids: string[] }> {
+    return request('/api/documents/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ documents }),
+    });
+  },
   deleteDocument(id: string): Promise<void> {
     return request<void>(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
-  crawl(input: { url: string; maxPages?: number; tags?: string[] }): Promise<{
+  crawl(input: {
+    url: string;
+    maxPages?: number;
+    tags?: string[];
+    sameOriginOnly?: boolean;
+  }): Promise<{
     startUrl: string;
     pagesCrawled: number;
     documentsIndexed: number;
@@ -228,6 +277,7 @@ export const api = {
     vehicle?: boolean;
     mot?: boolean;
     index?: boolean;
+    referenceDate?: string;
   }): Promise<PlateCheck> {
     return request<PlateCheck>('/api/plate/check', {
       method: 'POST',

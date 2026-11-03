@@ -292,6 +292,104 @@ describe('runUniversalSearch', () => {
     expect(result.actions.some((action) => action.id === 'add')).toBe(true);
   });
 
+  it('sorts the merged list by updatedAt and drops web hits that miss an active tag', async () => {
+    const engine = new SearchEngine();
+    const older = engine.upsert({
+      id: 'older-doc',
+      title: 'Beacon ranking notes',
+      body: 'Beacon ranking notes explain how the local index orders title matches.',
+      tags: ['ranking'],
+      source: 'handbook',
+    });
+    const newer = engine.upsert({
+      id: 'newer-doc',
+      title: 'Beacon ranking update',
+      body: 'Beacon ranking update covers the same title matching rules with a later edit.',
+      tags: ['ranking'],
+      source: 'handbook',
+    });
+    older.updatedAt = '2020-01-01T00:00:00.000Z';
+    newer.updatedAt = '2024-06-01T00:00:00.000Z';
+
+    const search = {
+      ...searchQuery('beacon ranking'),
+      sort: 'newest' as const,
+      tags: ['ranking'],
+    };
+    const result = await runUniversalSearch({
+      query: 'beacon ranking',
+      search,
+      engine,
+      config,
+      web: 'force',
+      backends: [
+        backend('DuckDuckGo', async () => [
+          {
+            title: 'Beacon ranking elsewhere',
+            url: 'https://example.com/beacon-ranking',
+            snippet: 'Beacon ranking elsewhere on the web.',
+          },
+        ]),
+      ],
+    });
+
+    expect(result.results.map((hit) => hit.id)).toEqual(['newer-doc', 'older-doc']);
+    expect(result.results.every((hit) => hit.updatedAt)).toBe(true);
+
+    const oldest = await runUniversalSearch({
+      query: 'beacon ranking',
+      search: { ...search, sort: 'oldest' },
+      engine,
+      config,
+      web: 'off',
+    });
+    expect(oldest.results.map((hit) => hit.id)).toEqual(['older-doc', 'newer-doc']);
+  });
+
+  it('forces a web search for a general query that already has local hits', async () => {
+    const engine = new SearchEngine();
+    miniSearchDoc(engine);
+    let calls = 0;
+    const skipped = await runUniversalSearch({
+      query: 'minisearch ranking',
+      search: searchQuery('minisearch ranking'),
+      engine,
+      config,
+      backends: [
+        backend('DuckDuckGo', async () => {
+          calls += 1;
+          return [];
+        }),
+      ],
+    });
+    expect(calls).toBe(0);
+    expect(skipped.diagnostics.some((item) => item.detail === 'local results were relevant')).toBe(
+      true,
+    );
+
+    const forced = await runUniversalSearch({
+      query: 'minisearch ranking',
+      search: searchQuery('minisearch ranking'),
+      engine,
+      config,
+      web: 'force',
+      backends: [
+        backend('DuckDuckGo', async () => {
+          calls += 1;
+          return [
+            {
+              title: 'MiniSearch ranking',
+              url: 'https://example.com/minisearch-ranking',
+              snippet: 'MiniSearch ranking on the web.',
+            },
+          ];
+        }),
+      ],
+    });
+    expect(calls).toBeGreaterThan(0);
+    expect(forced.results.some((hit) => hit.origin === 'web')).toBe(true);
+  });
+
   it('does not treat matthews as a fuzzy match for matches', () => {
     expect(isCloseSpelling('matthews', 'matches')).toBe(false);
     expect(isCloseSpelling('perfrmance', 'performance')).toBe(true);

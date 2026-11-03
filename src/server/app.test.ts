@@ -88,6 +88,8 @@ describe('HTTP API', () => {
 
     const bad = await app.inject({ method: 'GET', url: '/api/answer?q=a' });
     expect(bad.statusCode).toBe(400);
+    expect(bad.json().issues?.length).toBeGreaterThan(0);
+    expect(String(bad.json().issues[0].message).length).toBeGreaterThan(0);
 
     const res = await app.inject({ method: 'GET', url: '/api/answer?q=what%20is%20fastify' });
     expect(res.statusCode).toBe(200);

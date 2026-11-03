@@ -52,6 +52,8 @@ export interface AnswerServiceDeps {
 export interface AnswerOptions {
   fresh?: boolean;
   signal?: AbortSignal;
+  /** When set, cite these URLs instead of retrieving a fresh set of pages. */
+  urls?: string[];
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -119,7 +121,8 @@ export class AnswerService {
 
   async answer(query: string, options: AnswerOptions = {}): Promise<AnswerResponse> {
     const normalized = normalizeWhitespace(query);
-    const key = normalized.toLowerCase();
+    const urls = (options.urls ?? []).map((url) => url.trim()).filter(Boolean);
+    const key = `${normalized.toLowerCase()}\n${urls.join('\n')}`;
 
     if (!options.fresh) {
       const hit = this.cache.get(key);
@@ -153,6 +156,7 @@ export class AnswerService {
     startedAt: number,
   ): Promise<AnswerResponse> {
     const warnings: string[] = [];
+    const pinned = (options.urls ?? []).map((url) => url.trim()).filter(Boolean);
     const { sources: gathered, warnings: gatherWarnings } = await gatherSources(query, {
       engine: this.deps.engine,
       webSearch: this.resolveProviders(),
@@ -161,6 +165,7 @@ export class AnswerService {
       fetchImpl: this.deps.fetchImpl,
       logger: this.deps.logger,
       signal: options.signal,
+      pinUrls: pinned.length > 0 ? pinned : undefined,
     });
     warnings.push(...gatherWarnings);
 

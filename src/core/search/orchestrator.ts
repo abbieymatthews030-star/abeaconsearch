@@ -27,11 +27,20 @@ export interface Searchable {
   get(id: string): BeaconDocument | undefined;
 }
 
+export type WebMode = 'auto' | 'off' | 'force';
+
 export interface RunSearchOptions {
   query: string;
   search: SearchQuery;
   engine: Searchable;
   config: AnswerConfig;
+  /**
+   * `auto` keeps the default (local hits win for ordinary searches).
+   * `off` never calls the web. `force` always does, including when the
+   * local index already matched a general query.
+   */
+  web?: WebMode;
+  /** @deprecated Prefer `web: 'off'`. Kept so existing callers still compile. */
   includeWeb?: boolean;
   /** Test override. When set, these backends are used instead of the configured providers. */
   backends?: WebBackend[];
@@ -57,6 +66,37 @@ const WEB_INTENTS = new Set([
   'factual',
   'general',
 ]);
+
+function webModeOf(options: RunSearchOptions): WebMode {
+  if (options.web) return options.web;
+  if (options.includeWeb === false) return 'off';
+  return 'auto';
+}
+
+/** Tag filters are AND, matching the local engine. Source matches the chip label (`provider`). */
+function passesFilters(item: Ranked, search: SearchQuery): boolean {
+  if (search.source && item.hit.provider !== search.source) return false;
+  if (search.tags.length > 0 && !search.tags.every((tag) => item.hit.tags.includes(tag))) {
+    return false;
+  }
+  return true;
+}
+
+function compareRanked(sort: SearchQuery['sort'], a: Ranked, b: Ranked): number {
+  if (sort === 'title') {
+    return a.plainTitle.localeCompare(b.plainTitle) || b.hit.score - a.hit.score;
+  }
+  if (sort === 'newest' || sort === 'oldest') {
+    const av = a.hit.updatedAt ?? '';
+    const bv = b.hit.updatedAt ?? '';
+    if (av !== bv) {
+      if (!av) return 1;
+      if (!bv) return -1;
+      return sort === 'newest' ? bv.localeCompare(av) : av.localeCompare(bv);
+    }
+  }
+  return b.hit.score - a.hit.score;
+}
 
 function usefulSuggestion(query: string, suggestion: string | undefined): string | undefined {
   if (!suggestion) return undefined;
@@ -106,6 +146,7 @@ function indexHits(
           assessment.helpFactor,
         ),
         tags: doc.tags,
+        updatedAt: doc.updatedAt,
       },
       plainTitle: doc.title,
       domain,
@@ -212,6 +253,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       provider: hit.source || 'Local index',
       score: hit.score,
       tags: hit.tags,
+      updatedAt: options.engine.get(hit.id)?.updatedAt,
     }));
     return {
       query: '',
@@ -244,11 +286,12 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   );
   const local = filteredLocalResponse({ ...options.search, q: query }, rawLocal, localRanked);
 
+  const webMode = webModeOf(options);
   const shouldWeb =
-    options.includeWeb !== false &&
+    webMode !== 'off' &&
     query.trim().length > 0 &&
     WEB_INTENTS.has(intent) &&
-    (localRanked.length === 0 || intent !== 'general');
+    (webMode === 'force' || localRanked.length === 0 || intent !== 'general');
 
   const specs = options.backends ?? describeWebProviders(options.config);
   const fan = shouldWeb
@@ -267,9 +310,11 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
           label: spec.label,
           status: 'skipped' as const,
           detail:
-            localRanked.length > 0
-              ? 'local results were relevant'
-              : 'web search not used for this query',
+            webMode === 'off'
+              ? 'web search disabled for this request'
+              : localRanked.length > 0
+                ? 'local results were relevant'
+                : 'web search not used for this query',
           missingEnv: spec.provider ? [] : spec.missingEnv,
           resultCount: 0,
         })),
@@ -310,7 +355,10 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   });
   const webKept = full.length > 0 ? full : webRanked;
 
-  const merged = dedupe([...localRanked, ...webKept]).sort((a, b) => b.hit.score - a.hit.score);
+  const search = options.search;
+  const merged = dedupe([...localRanked, ...webKept])
+    .filter((item) => passesFilters(item, search))
+    .sort((a, b) => compareRanked(search.sort, a, b));
   const page = merged.slice(options.search.offset, options.search.offset + options.search.limit);
 
   const localDiagnostic: SearchDiagnostic = {

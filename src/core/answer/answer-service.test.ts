@@ -22,6 +22,25 @@ const PENGUIN_DOC = {
 };
 
 describe('AnswerService', () => {
+  it('cites pinned result URLs instead of running another web search', async () => {
+    const search = vi.fn(async () => [
+      { title: 'Other', url: 'https://example.com/other', snippet: 'something else' },
+    ]);
+    const service = new AnswerService({
+      engine: engineWith([PENGUIN_DOC]),
+      config: answerConfig(),
+      userAgent: 'test',
+      webSearch: { name: 'DuckDuckGo', configured: true, search },
+      synthesizers: [],
+    });
+    const res = await service.answer('where do penguins live', {
+      urls: ['https://en.wikipedia.org/wiki/Penguin'],
+    });
+    expect(search).not.toHaveBeenCalled();
+    expect(res.sources.some((source) => source.url?.includes('wiki/Penguin'))).toBe(true);
+    expect(res.sources.some((source) => source.url?.includes('example.com/other'))).toBe(false);
+  });
+
   it('returns a non-empty "none" answer when nothing is retrieved', async () => {
     const service = new AnswerService({
       engine: engineWith([]),
@@ -183,7 +202,11 @@ describe('AnswerService', () => {
       name: 'StubSearch',
       configured: true,
       search: async () => [
-        { title: 'Penguin facts', url: 'https://fake.example/penguins?utm_source=newsletter', snippet: '' },
+        {
+          title: 'Penguin facts',
+          url: 'https://fake.example/penguins?utm_source=newsletter',
+          snippet: '',
+        },
       ],
     };
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
@@ -296,7 +319,9 @@ describe('identity / entity resolution', () => {
     const webSearch: WebSearchProvider = {
       name: 'StubSearch',
       configured: true,
-      search: async () => [{ title: 'Abbiey Matthews', url: 'https://fake.example/abbiey-matthews', snippet: '' }],
+      search: async () => [
+        { title: 'Abbiey Matthews', url: 'https://fake.example/abbiey-matthews', snippet: '' },
+      ],
     };
     const service = new AnswerService({
       engine: engineWith([]),
@@ -304,7 +329,9 @@ describe('identity / entity resolution', () => {
       userAgent: 'test',
       webSearch,
       synthesizers: [],
-      fetchImpl: pageFetch({ 'abbiey-matthews': { title: 'Abbiey Matthews - YouTube', body: YOUTUBE_FOOTER } }),
+      fetchImpl: pageFetch({
+        'abbiey-matthews': { title: 'Abbiey Matthews - YouTube', body: YOUTUBE_FOOTER },
+      }),
     });
     const res = await service.answer('Abbiey Matthews');
     expect(res.answer).not.toContain('AboutPress');
@@ -321,7 +348,9 @@ describe('identity / entity resolution', () => {
     const webSearch: WebSearchProvider = {
       name: 'StubSearch',
       configured: true,
-      search: async () => [{ title: 'Abbiey Matthews', url: 'https://fake.example/abbiey-matthews', snippet: '' }],
+      search: async () => [
+        { title: 'Abbiey Matthews', url: 'https://fake.example/abbiey-matthews', snippet: '' },
+      ],
     };
     const bio =
       'Abbiey Matthews is a software engineer based in Melbourne who builds open-source search tools and writes about backend infrastructure.';
@@ -343,7 +372,11 @@ describe('identity / entity resolution', () => {
       name: 'StubSearch',
       configured: true,
       search: async () => [
-        { title: 'Maiz Gustavo - Carpentry Australia', url: 'https://fake.example/carpentry', snippet: '' },
+        {
+          title: 'Maiz Gustavo - Carpentry Australia',
+          url: 'https://fake.example/carpentry',
+          snippet: '',
+        },
         { title: 'Gustavo Angel Maddonni', url: 'https://fake.example/agronomy', snippet: '' },
         { title: 'Los Guardianes del Maiz', url: 'https://fake.example/film', snippet: '' },
       ],
@@ -392,15 +425,24 @@ describe('identity / entity resolution', () => {
         { title: 'Abbiey Matthews', url: 'https://established.example/b', snippet: '' },
       ],
     };
-    const bio1 = 'Abbiey Matthews is a software engineer who works on open-source search infrastructure.';
-    const bio2 = 'Abbiey Matthews, a software engineer, has contributed to several open-source search projects.';
+    const bio1 =
+      'Abbiey Matthews is a software engineer who works on open-source search infrastructure.';
+    const bio2 =
+      'Abbiey Matthews, a software engineer, has contributed to several open-source search projects.';
     const service = new AnswerService({
       engine: engineWith([]),
-      config: answerConfig({ allowPrivateHosts: true, maxSources: 2, trustedDomains: ['established.example'] }),
+      config: answerConfig({
+        allowPrivateHosts: true,
+        maxSources: 2,
+        trustedDomains: ['established.example'],
+      }),
       userAgent: 'test',
       webSearch,
       synthesizers: [],
-      fetchImpl: pageFetch({ a: { title: 'Abbiey Matthews', body: bio1 }, b: { title: 'Abbiey Matthews', body: bio2 } }),
+      fetchImpl: pageFetch({
+        a: { title: 'Abbiey Matthews', body: bio1 },
+        b: { title: 'Abbiey Matthews', body: bio2 },
+      }),
     });
     const res = await service.answer('Abbiey Matthews');
     expect(res.confidence === 'high' || res.confidence === 'medium').toBe(true);
@@ -423,8 +465,14 @@ describe('identity / entity resolution', () => {
       webSearch,
       synthesizers: [],
       fetchImpl: pageFetch({
-        one: { title: 'Fact Page One', body: 'The bridge was completed in 1998 after a long construction project.' },
-        two: { title: 'Fact Page Two', body: 'The bridge was not completed in 1998, construction dragged on for years after.' },
+        one: {
+          title: 'Fact Page One',
+          body: 'The bridge was completed in 1998 after a long construction project.',
+        },
+        two: {
+          title: 'Fact Page Two',
+          body: 'The bridge was not completed in 1998, construction dragged on for years after.',
+        },
       }),
     });
     const res = await service.answer('when was the bridge completed');
@@ -435,7 +483,9 @@ describe('identity / entity resolution', () => {
     const webSearch: WebSearchProvider = {
       name: 'StubSearch',
       configured: true,
-      search: async () => [{ title: 'Random Page', url: 'https://fake.example/random', snippet: '' }],
+      search: async () => [
+        { title: 'Random Page', url: 'https://fake.example/random', snippet: '' },
+      ],
     };
     const service = new AnswerService({
       engine: engineWith([]),
@@ -454,7 +504,9 @@ describe('identity / entity resolution', () => {
     const webSearch: WebSearchProvider = {
       name: 'StubSearch',
       configured: true,
-      search: async () => [{ title: 'Penguin facts', url: 'https://fake.example/penguins', snippet: '' }],
+      search: async () => [
+        { title: 'Penguin facts', url: 'https://fake.example/penguins', snippet: '' },
+      ],
     };
     const service = new AnswerService({
       engine: engineWith([]),
@@ -463,7 +515,10 @@ describe('identity / entity resolution', () => {
       webSearch,
       synthesizers: [],
       fetchImpl: pageFetch({
-        penguins: { title: 'Penguin facts', body: 'Penguins live in the Southern Hemisphere and eat fish.' },
+        penguins: {
+          title: 'Penguin facts',
+          body: 'Penguins live in the Southern Hemisphere and eat fish.',
+        },
       }),
     });
     const res = await service.answer('where do penguins live');

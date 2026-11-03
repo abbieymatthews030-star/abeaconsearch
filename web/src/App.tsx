@@ -23,9 +23,10 @@ import {
 } from './api';
 import {
   CLIENT_SETTINGS,
-  SERVER_SETTINGS,
+  clientSettingsInSection,
+  inSection,
   searchSettings,
-  settingsInSection,
+  serverEntryToDefinition,
   type SettingDefinition,
   type SettingSection,
 } from './settings-registry';
@@ -43,40 +44,54 @@ function useDebounced<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
-const QUESTION_STARTS =
-  /^(who|what|whats|when|where|why|how|is|are|was|were|does|do|did|can|could|should|would|will|which|whom|whose|define|explain|tell)\b/i;
-
-/** Heuristic: does this query read like a question worth auto-answering? */
-function isQuestionLike(q: string): boolean {
-  const t = q.trim();
-  if (t.length < 8) return false;
-  if (t.includes('?')) return true;
-  if (QUESTION_STARTS.test(t)) return true;
-  return t.split(/\s+/).length >= 4;
-}
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/** A bare email or a quoted name reads as "research this", not "search for this text". */
-function looksLikeResearchTarget(q: string): boolean {
-  const t = q.trim();
-  if (EMAIL_RE.test(t)) return true;
-  const quoted = /^["“](.+)["”]$/.exec(t);
-  return Boolean(quoted?.[1]?.trim());
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return 'unknown';
-  const secs = Math.max(1, Math.round((Date.now() - then) / 1000));
-  for (const [size, label] of [
-    [86400, 'd'],
-    [3600, 'h'],
-    [60, 'm'],
-  ] as Array<[number, string]>) {
-    if (secs >= size) return `${Math.floor(secs / size)}${label} ago`;
+function localeForRegion(region: unknown): string | undefined {
+  switch (region) {
+    case 'AU':
+      return 'en-AU';
+    case 'UK':
+      return 'en-GB';
+    case 'US':
+      return 'en-US';
+    default:
+      return undefined;
   }
-  return `${secs}s ago`;
+}
+
+function relativeTime(iso: string, region?: unknown): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return 'unknown';
+  const secs = Math.max(1, Math.round((Date.now() - then) / 1000));
+  const rtf = new Intl.RelativeTimeFormat(localeForRegion(region), { numeric: 'auto' });
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 31_536_000],
+    ['month', 2_592_000],
+    ['week', 604_800],
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+  ];
+  for (const [unit, size] of units) {
+    if (secs >= size) return rtf.format(-Math.round(secs / size), unit);
+  }
+  return rtf.format(-secs, 'second');
+}
+
+function formatCount(n: number, region?: unknown): string {
+  return n.toLocaleString(localeForRegion(region));
+}
+
+function retentionMs(days: unknown): number | null {
+  const n = Number(days);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n * 86_400_000;
+}
+
+function pruneHistory(entries: HistoryEntry[], days: unknown): HistoryEntry[] {
+  const windowMs = retentionMs(days);
+  const cutoff = windowMs == null ? null : Date.now() - windowMs;
+  const fresh =
+    cutoff == null ? entries : entries.filter((entry) => new Date(entry.at).getTime() >= cutoff);
+  return fresh.slice(0, HISTORY_LIMIT);
 }
 
 function stripCitations(text: string): string {
@@ -258,19 +273,35 @@ export function App(): JSX.Element {
   }, []);
   useEffect(refreshHealth, [refreshHealth]);
 
-  const recordHistory = useCallback((query: string, kind: QueryKind) => {
-    const q = query.trim();
-    if (!q) return;
+  const retentionDays = clientSettings.values.historyRetentionDays;
+  const saveSearchHistory = clientSettings.values.saveSearchHistory !== false;
+  const region = clientSettings.values.region;
+
+  useEffect(() => {
     setHistory((prev) => {
-      if (prev[0]?.query === q) return prev;
-      const next = [
-        { query: q, kind, at: new Date().toISOString() },
-        ...prev.filter((e) => e.query !== q),
-      ].slice(0, HISTORY_LIMIT);
+      const next = pruneHistory(prev, retentionDays);
+      if (next.length === prev.length && next.every((entry, i) => entry === prev[i])) return prev;
       saveHistory(next);
       return next;
     });
-  }, []);
+  }, [retentionDays]);
+
+  const recordHistory = useCallback(
+    (query: string, kind: QueryKind) => {
+      const q = query.trim();
+      if (!q || !saveSearchHistory) return;
+      setHistory((prev) => {
+        if (prev[0]?.query === q) return prev;
+        const next = pruneHistory(
+          [{ query: q, kind, at: new Date().toISOString() }, ...prev.filter((e) => e.query !== q)],
+          retentionDays,
+        );
+        saveHistory(next);
+        return next;
+      });
+    },
+    [retentionDays, saveSearchHistory],
+  );
 
   const clearHistory = useCallback(() => {
     setHistory([]);
@@ -328,7 +359,12 @@ export function App(): JSX.Element {
           />
         )}
         {tab === 'history' && (
-          <HistoryView entries={history} onPick={runFromHistory} onClear={clearHistory} />
+          <HistoryView
+            entries={history}
+            region={region}
+            onPick={runFromHistory}
+            onClear={clearHistory}
+          />
         )}
         {tab === 'settings' && (
           <SettingsView
@@ -383,12 +419,16 @@ function SearchView({
   const searchMode = String(clientSettings.values.searchMode ?? 'balanced');
   const typoCorrection = clientSettings.values.typoCorrection !== false;
   const queryExpansion = clientSettings.values.queryExpansion !== false;
+  const prefixMatch = clientSettings.values.prefixMatch !== false;
   const directAnswers = health?.answer.autoAnswer ?? true;
+  const citationsVisible = clientSettings.values.citationsVisible !== false;
+  const region = clientSettings.values.region;
+  const freshness = clientSettings.values.freshness === true;
 
   const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [sort, setSort] = useState<SearchSort>(
-    clientSettings.values.freshness ? 'newest' : 'relevance',
-  );
+  const [activeSource, setActiveSource] = useState<string | undefined>();
+  const [sort, setSort] = useState<SearchSort>(freshness ? 'newest' : 'relevance');
+  const [forceWeb, setForceWeb] = useState(false);
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<UniversalQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -417,7 +457,7 @@ function SearchView({
   const [addingSource, setAddingSource] = useState(false);
   const answerAbort = useRef<AbortController | null>(null);
 
-  const runAnswer = useCallback((q: string, fresh: boolean) => {
+  const runAnswer = useCallback((q: string, fresh: boolean, urls?: string[]) => {
     answerAbort.current?.abort();
     const controller = new AbortController();
     answerAbort.current = controller;
@@ -425,7 +465,7 @@ function SearchView({
     setAnswerLoading(true);
     setAnswerError(null);
     api
-      .answer(q, fresh, controller.signal)
+      .answer(q, fresh, controller.signal, fresh ? undefined : urls)
       .then((res) => {
         setAnswer(res);
         setAnswerError(null);
@@ -439,7 +479,11 @@ function SearchView({
       });
   }, []);
 
-  const answerIntent = result && result.query === answerQuery ? result.intent : null;
+  const synthesis = result && result.query === answerQuery ? result.synthesis : null;
+  const citedUrls =
+    result && result.query === answerQuery
+      ? result.results.map((hit) => hit.url).filter((url): url is string => Boolean(url))
+      : [];
 
   useEffect(() => {
     answerAbort.current?.abort();
@@ -447,22 +491,39 @@ function SearchView({
     setAnswerError(null);
     setAnswerRequested(false);
     setAnswerLoading(false);
-    if (!answersEnabled || !directAnswers || !answerQuery || !answerIntent) return;
-    const research =
-      isQuestionLike(answerQuery) ||
-      looksLikeResearchTarget(answerQuery) ||
-      answerIntent === 'person' ||
-      answerIntent === 'company' ||
-      answerIntent === 'email' ||
-      answerIntent === 'username' ||
-      answerIntent === 'location' ||
-      answerIntent === 'factual';
-    if (research) runAnswer(answerQuery, false);
-  }, [answerQuery, answerIntent, answersEnabled, directAnswers, runAnswer]);
+    if (!answersEnabled || !directAnswers || !answerQuery || synthesis !== 'possible') return;
+    runAnswer(answerQuery, false, citedUrls);
+    // citedUrls is derived from `result`; depending on the array identity would refetch every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerQuery, synthesis, answersEnabled, directAnswers, result, runAnswer]);
+
+  const freshnessWas = useRef(freshness);
+  useEffect(() => {
+    if (freshnessWas.current === freshness) return;
+    freshnessWas.current = freshness;
+    setSort((current) => {
+      if (freshness) return 'newest';
+      return current === 'newest' ? 'relevance' : current;
+    });
+  }, [freshness]);
+
+  useEffect(() => {
+    setForceWeb(false);
+  }, [query]);
 
   useEffect(() => {
     setPage(0);
-  }, [query, activeTags, sort, searchMode, typoCorrection, queryExpansion]);
+  }, [
+    query,
+    activeTags,
+    activeSource,
+    sort,
+    searchMode,
+    typoCorrection,
+    queryExpansion,
+    prefixMatch,
+    forceWeb,
+  ]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -476,10 +537,13 @@ function SearchView({
           limit: resultsPerPage,
           offset: page * resultsPerPage,
           tags: activeTags,
+          source: activeSource,
           sort,
           combineWith: searchMode === 'precise' ? 'AND' : searchMode === 'broad' ? 'OR' : undefined,
           allowPartialMatch: searchMode === 'precise' ? false : queryExpansion,
           fuzzy: typoCorrection,
+          prefix: prefixMatch,
+          web: forceWeb ? 'force' : undefined,
         },
         controller.signal,
       )
@@ -504,6 +568,9 @@ function SearchView({
     searchMode,
     typoCorrection,
     queryExpansion,
+    prefixMatch,
+    activeSource,
+    forceWeb,
     retryNonce,
   ]);
 
@@ -555,10 +622,31 @@ function SearchView({
     [local],
   );
 
+  const facetSources = useMemo(
+    () =>
+      local
+        ? Object.entries(local.facets.sources)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 12)
+        : [],
+    [local],
+  );
+
   const toggleTag = (tag: string) =>
     setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
 
-  const hasFilters = (local?.total ?? 0) > 1 || activeTags.length > 0 || facetTags.length > 0;
+  const chooseSort = (next: SearchSort) => {
+    setSort(next);
+    const wantFresh = next === 'newest';
+    if (freshness !== wantFresh) clientSettings.setValue('freshness', wantFresh);
+  };
+
+  const hasFilters =
+    (result?.total ?? 0) > 1 ||
+    activeTags.length > 0 ||
+    Boolean(activeSource) ||
+    facetTags.length > 0 ||
+    facetSources.length > 0;
   const answerHasProse = Boolean(
     answer &&
     (answer.confidence !== 'none' ||
@@ -578,6 +666,7 @@ function SearchView({
     }
     if (!action.query) return;
     if (action.id === 'web' && action.query === query.trim()) {
+      setForceWeb(true);
       setRetryNonce((n) => n + 1);
       return;
     }
@@ -687,11 +776,19 @@ function SearchView({
 
       {result?.primary && <PrimaryCard primary={result.primary} />}
 
-      {answersEnabled && answerQuery && !answerRequested && (
-        <button type="button" className="answer__cta" onClick={() => runAnswer(answerQuery, false)}>
-          ↳ weave an answer for “{answerQuery}”
-        </button>
-      )}
+      {answersEnabled &&
+        answerQuery &&
+        synthesis === 'possible' &&
+        !directAnswers &&
+        !answerRequested && (
+          <button
+            type="button"
+            className="answer__cta"
+            onClick={() => runAnswer(answerQuery, false, citedUrls)}
+          >
+            ↳ weave an answer for “{answerQuery}”
+          </button>
+        )}
 
       {loading && query.trim() && (
         <p className="search__status">Searching web and connected sources…</p>
@@ -705,6 +802,8 @@ function SearchView({
         <AnswerCard
           data={answer}
           loading={answerLoading}
+          citationsVisible={citationsVisible}
+          region={region}
           onRefresh={() => runAnswer(answerQuery || query, true)}
         />
       )}
@@ -713,18 +812,21 @@ function SearchView({
         <p className="search__status">Checking whether these results support a summary…</p>
       )}
 
-      {!answerLoading && hits.length > 0 && answer && !answerHasProse && (
-        <p className="search__summary-note">
-          Results found for “{query.trim()}”, but there isn’t enough evidence to write a summary.
-        </p>
-      )}
+      {!answerLoading &&
+        ((hits.length > 0 && answer && !answerHasProse) ||
+          (synthesis === 'insufficient' && !answerRequested)) && (
+          <p className="search__summary-note">
+            Results found for “{query.trim()}”, but there isn’t enough evidence to write a summary.
+          </p>
+        )}
 
       {result && query.trim() && !loading && (
         <p className="search__meta">
-          <strong>{result.total.toLocaleString()}</strong> result{result.total === 1 ? '' : 's'}
+          <strong>{formatCount(result.total, region)}</strong> result{result.total === 1 ? '' : 's'}
           {result.query ? ` for “${result.query}”` : ''}
           {' · '}
           {result.tookMs} ms
+          {result.intent !== 'general' ? ` · ${result.intent}` : ''}
           {hasFilters && (
             <button
               type="button"
@@ -739,10 +841,13 @@ function SearchView({
 
       {filtersOpen && hasFilters && (
         <div className="filters">
-          {local && local.total > 1 && (
+          {(result?.total ?? 0) > 1 && (
             <label className="search__sort">
               sort
-              <select value={sort} onChange={(event) => setSort(event.target.value as SearchSort)}>
+              <select
+                value={sort}
+                onChange={(event) => chooseSort(event.target.value as SearchSort)}
+              >
                 {SORT_OPTIONS.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
@@ -781,6 +886,21 @@ function SearchView({
               ))}
             </div>
           )}
+
+          {facetSources.length > 0 && (
+            <div className="chips chips--facets">
+              {facetSources.map(([source, count]) => (
+                <button
+                  key={source}
+                  type="button"
+                  className={activeSource === source ? 'chip chip--active' : 'chip'}
+                  onClick={() => setActiveSource((prev) => (prev === source ? undefined : source))}
+                >
+                  {source} <span className="chip__count">{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -801,7 +921,10 @@ function SearchView({
               <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
             )}
             <div className="result__foot">
-              <span className="result__source">{hit.provider}</span>
+              <span className="result__source" data-score={hit.score}>
+                {hit.origin === 'web' ? 'web' : 'index'} · {hit.provider}
+              </span>
+              {hit.updatedAt && <span>{relativeTime(hit.updatedAt, region)}</span>}
               {hit.tags.map((tag) => (
                 <button
                   key={tag}
@@ -901,8 +1024,8 @@ function SearchView({
               {answer.synthesizer === 'extractive'
                 ? 'extractive, no model configured'
                 : answer.synthesizer}
-              {answer.warnings.length > 0 ? `. ${answer.warnings.join(' ')}` : ''}
               {answer.tookMs ? ` — ${Math.round(answer.tookMs)} ms` : ''}
+              {answer.generatedAt ? ` — ${relativeTime(answer.generatedAt, region)}` : ''}
             </p>
           )}
         </details>
@@ -943,11 +1066,7 @@ function PrimaryCard({ primary }: { primary: PrimaryResult }): JSX.Element {
     case 'calculation':
       return <CalculationCard primary={primary} />;
     case 'plate':
-      return (
-        <section className="primary-card primary-card--plate">
-          <PlateReport report={primary.data} />
-        </section>
-      );
+      return <PlateSearchCard initial={primary.data} />;
   }
 }
 
@@ -1106,10 +1225,12 @@ function CalculationCard({ primary }: { primary: CalculationPrimary }): JSX.Elem
 
 function HistoryView({
   entries,
+  region,
   onPick,
   onClear,
 }: {
   entries: HistoryEntry[];
+  region: unknown;
   onPick: (query: string) => void;
   onClear: () => void;
 }): JSX.Element {
@@ -1132,7 +1253,7 @@ function HistoryView({
                 {entry.query}
               </button>
               <span className="history__kind">{KIND_LABEL[entry.kind]}</span>
-              <span className="history__time">{relativeTime(entry.at)}</span>
+              <span className="history__time">{relativeTime(entry.at, region)}</span>
             </li>
           ))}
         </ul>
@@ -1147,18 +1268,28 @@ function HistoryView({
   );
 }
 
-function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
+function LibraryView({
+  onDone,
+  pageSize,
+  region,
+}: {
+  onDone: () => void;
+  pageSize: number;
+  region: unknown;
+}): JSX.Element {
   const [docs, setDocs] = useState<BeaconDocument[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<'add' | 'crawl' | null>(null);
+  const [panel, setPanel] = useState<'add' | 'edit' | 'crawl' | 'import' | null>(null);
+  const [editing, setEditing] = useState<BeaconDocument | null>(null);
+  const [detail, setDetail] = useState<BeaconDocument | null>(null);
 
   const refresh = useCallback(() => {
     setLoading(true);
     api
-      .documents({ limit: DEFAULT_PAGE_SIZE, offset: page * DEFAULT_PAGE_SIZE })
+      .documents({ limit: pageSize, offset: page * pageSize })
       .then((res) => {
         setDocs(res.documents);
         setTotal(res.total);
@@ -1168,7 +1299,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
         setError(err instanceof Error ? err.message : 'Failed to load documents'),
       )
       .finally(() => setLoading(false));
-  }, [page]);
+  }, [page, pageSize]);
 
   useEffect(refresh, [refresh]);
 
@@ -1202,7 +1333,22 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to clear'));
   };
 
-  const totalPages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const openDetail = (id: string) => {
+    api
+      .document(id)
+      .then((doc) => {
+        setDetail(doc);
+        setError(null);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load'));
+  };
+
+  const startEdit = (doc: BeaconDocument) => {
+    setEditing(doc);
+    setPanel('edit');
+  };
 
   return (
     <section className="library">
@@ -1214,6 +1360,13 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
           onClick={() => setPanel((p) => (p === 'add' ? null : 'add'))}
         >
           + add document
+        </button>
+        <button
+          type="button"
+          className={panel === 'import' ? 'btn btn--active' : 'btn'}
+          onClick={() => setPanel((p) => (p === 'import' ? null : 'import'))}
+        >
+          ↑ import json
         </button>
         <button
           type="button"
@@ -1230,12 +1383,38 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
       </div>
 
       {panel === 'add' && <AddView onDone={handleAdded} />}
+      {panel === 'edit' && editing && (
+        <AddView
+          initial={editing}
+          onDone={() => {
+            setEditing(null);
+            handleAdded();
+          }}
+        />
+      )}
+      {panel === 'import' && <ImportView onDone={handleAdded} />}
       {panel === 'crawl' && <CrawlView onDone={handleAdded} />}
+      {detail && (
+        <article className="library__detail">
+          <div className="library__actions">
+            <strong>{detail.title}</strong>
+            <span>{detail.id}</span>
+            <button type="button" className="btn" onClick={() => startEdit(detail)}>
+              edit
+            </button>
+            <button type="button" className="btn" onClick={() => setDetail(null)}>
+              close
+            </button>
+          </div>
+          {detail.source && <p className="notice">Source: {detail.source}</p>}
+          <p className="answer__quote">{detail.body || '(empty body)'}</p>
+        </article>
+      )}
 
       {error && <p className="notice notice--error">{error}</p>}
 
       <p className="search__meta">
-        <strong>{total.toLocaleString()}</strong> document{total === 1 ? '' : 's'} indexed
+        <strong>{formatCount(total, region)}</strong> document{total === 1 ? '' : 's'} indexed
         {loading && (
           <>
             {' · '}
@@ -1259,11 +1438,18 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
                   )}
                 </strong>
                 <div className="library__row-meta">
+                  <span>{doc.id}</span>
                   {doc.source && <span>{doc.source}</span>}
                   {doc.tags.length > 0 && <span>{doc.tags.join(', ')}</span>}
-                  <span>{relativeTime(doc.updatedAt)}</span>
+                  <span>{relativeTime(doc.updatedAt, region)}</span>
                 </div>
               </div>
+              <button type="button" className="library__remove" onClick={() => openDetail(doc.id)}>
+                view
+              </button>
+              <button type="button" className="library__remove" onClick={() => startEdit(doc)}>
+                edit
+              </button>
               <button
                 type="button"
                 className="library__remove"
@@ -1285,7 +1471,7 @@ function LibraryView({ onDone }: { onDone: () => void }): JSX.Element {
         )
       )}
 
-      {total > DEFAULT_PAGE_SIZE && (
+      {total > pageSize && (
         <div className="pager">
           <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             ← Previous
@@ -1341,17 +1527,32 @@ function sourceMatchLabel(source: AnswerSource): string | undefined {
 function AnswerCard({
   data,
   loading,
+  citationsVisible,
+  region,
   onRefresh,
 }: {
   data: AnswerResponse | null;
   loading: boolean;
+  citationsVisible: boolean;
+  region: unknown;
   onRefresh: () => void;
 }): JSX.Element {
+  const cite = (id: number) =>
+    citationsVisible ? (
+      <a key={id} href={`#answer-src-${id}`} className="cite">
+        [{id}]
+      </a>
+    ) : null;
   return (
-    <section className="answer" aria-busy={loading}>
+    <section
+      className="answer"
+      aria-busy={loading}
+      aria-label={data ? `Answer for ${data.query}` : 'Answer'}
+    >
       <div className="answer__head">
         <span className="answer__tag">ANSWER</span>
         {data && <ConfidenceBadge confidence={data.confidence} />}
+        {data?.cached && <span className="badge badge--muted">cached</span>}
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />
         {data && (
@@ -1366,6 +1567,17 @@ function AnswerCard({
       {data && (
         <>
           <p className="answer__reason">{data.confidenceReason}</p>
+          <p className="answer__reason">
+            identity {Math.round(data.identityConfidence * 100)}% · source quality{' '}
+            {Math.round(data.sourceQuality * 100)}%{data.cached ? ' · cached' : ''}
+          </p>
+          {data.warnings.length > 0 && (
+            <ul className="answer__gaps">
+              {data.warnings.map((warning, i) => (
+                <li key={i}>{warning}</li>
+              ))}
+            </ul>
+          )}
 
           {data.candidates && data.candidates.length > 0 ? (
             <>
@@ -1382,12 +1594,8 @@ function AnswerCard({
                       )}
                     </div>
                     <p className="answer__candidate-summary">
-                      {stripCitations(candidate.summary)}{' '}
-                      {candidate.sourceIds.map((id) => (
-                        <a key={id} href={`#answer-src-${id}`} className="cite">
-                          [{id}]
-                        </a>
-                      ))}
+                      {citationsVisible ? candidate.summary : stripCitations(candidate.summary)}{' '}
+                      {candidate.sourceIds.map((id) => cite(id))}
                     </p>
                   </li>
                 ))}
@@ -1397,12 +1605,8 @@ function AnswerCard({
             <p className="answer__body">
               {data.claims.map((claim, i) => (
                 <span key={i} className={claim.supported ? 'claim' : 'claim claim--unverified'}>
-                  {stripCitations(claim.text)}{' '}
-                  {claim.sourceIds.map((id) => (
-                    <a key={id} href={`#answer-src-${id}`} className="cite">
-                      [{id}]
-                    </a>
-                  ))}
+                  {citationsVisible ? claim.text : stripCitations(claim.text)}{' '}
+                  {claim.sourceIds.map((id) => cite(id))}
                   {!claim.supported && <span className="claim__flag">unverified</span>}{' '}
                 </span>
               ))}
@@ -1413,15 +1617,13 @@ function AnswerCard({
 
           {data.disclaimer && <p className="answer__disclaimer">⚠ {data.disclaimer}</p>}
 
-          {data.searchGaps.some((gap) => /disagree/i.test(gap)) && (
+          {data.searchGaps.length > 0 && (
             <div className="answer__gaps">
               <span className="answer__gaps-tag">Search gaps</span>
               <ul>
-                {data.searchGaps
-                  .filter((gap) => /disagree/i.test(gap))
-                  .map((gap, i) => (
-                    <li key={i}>{gap}</li>
-                  ))}
+                {data.searchGaps.map((gap, i) => (
+                  <li key={i}>{gap}</li>
+                ))}
               </ul>
             </div>
           )}
@@ -1449,10 +1651,11 @@ function AnswerCard({
                     <span className={`trust trust--${source.trust}`}>
                       {TRUST_LABEL[source.trust]}
                     </span>
+                    <span>{source.origin}</span>
                     {source.domain && <span>{source.domain}</span>}
                     <span>
                       {source.live ? 'fetched ' : 'indexed '}
-                      {relativeTime(source.retrievedAt)}
+                      {relativeTime(source.retrievedAt, region)}
                     </span>
                   </div>
                   <div className="answer__source-why">{source.trustReason}</div>
@@ -1473,34 +1676,52 @@ function AnswerCard({
   );
 }
 
-function AddView({ onDone }: { onDone: () => void }): JSX.Element {
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [url, setUrl] = useState('');
-  const [tags, setTags] = useState('');
+function AddView({
+  onDone,
+  initial,
+}: {
+  onDone: () => void;
+  initial?: BeaconDocument;
+}): JSX.Element {
+  const [docId, setDocId] = useState(initial?.id ?? '');
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [body, setBody] = useState(initial?.body ?? '');
+  const [url, setUrl] = useState(initial?.url ?? '');
+  const [source, setSource] = useState(initial?.source ?? '');
+  const [tags, setTags] = useState(initial?.tags.join(', ') ?? '');
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const parsedTags = tags
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setStatus(null);
-    api
-      .addDocument({
-        title: title.trim(),
-        body,
-        url: url.trim() || undefined,
-        tags: tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      })
+    const payload = {
+      title: title.trim(),
+      body,
+      url: url.trim() || undefined,
+      source: source.trim() || undefined,
+      tags: parsedTags,
+    };
+    const request = initial
+      ? api.updateDocument(initial.id, payload)
+      : api.addDocument({ ...payload, id: docId.trim() || undefined });
+    request
       .then((doc) => {
         setStatus({ kind: 'ok', text: `Indexed "${doc.title}" (id: ${doc.id})` });
-        setTitle('');
-        setBody('');
-        setUrl('');
-        setTags('');
+        if (!initial) {
+          setDocId('');
+          setTitle('');
+          setBody('');
+          setUrl('');
+          setSource('');
+          setTags('');
+        }
         onDone();
       })
       .catch((err: unknown) =>
@@ -1512,8 +1733,26 @@ function AddView({ onDone }: { onDone: () => void }): JSX.Element {
   return (
     <form className="form" onSubmit={submit}>
       <label>
+        Id {initial ? '' : '(optional, stable across re-adds)'}
+        <input
+          value={initial ? initial.id : docId}
+          onChange={(e) => setDocId(e.target.value)}
+          readOnly={Boolean(initial)}
+          maxLength={512}
+        />
+      </label>
+      <label>
         Title
         <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={1024} />
+      </label>
+      <label>
+        Source (optional)
+        <input
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          placeholder="handbook"
+          maxLength={256}
+        />
       </label>
       <label>
         URL (optional)
@@ -1533,7 +1772,76 @@ function AddView({ onDone }: { onDone: () => void }): JSX.Element {
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} />
       </label>
       <button type="submit" className="btn" disabled={busy || title.trim() === ''}>
-        {busy ? 'Indexing…' : 'Add to index'}
+        {busy ? 'Indexing…' : initial ? 'Save changes' : 'Add to index'}
+      </button>
+      {status && (
+        <p className={status.kind === 'ok' ? 'notice notice--ok' : 'notice notice--error'}>
+          {status.text}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function ImportView({ onDone }: { onDone: () => void }): JSX.Element {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setStatus(null);
+    let documents: unknown[];
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (Array.isArray(parsed)) documents = parsed;
+      else if (
+        parsed &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { documents?: unknown }).documents)
+      ) {
+        documents = (parsed as { documents: unknown[] }).documents;
+      } else {
+        throw new Error(
+          'Expected a JSON array or { "documents": [...] }, the same shape the CLI imports.',
+        );
+      }
+    } catch (err) {
+      setBusy(false);
+      setStatus({ kind: 'error', text: err instanceof Error ? err.message : 'Invalid JSON' });
+      return;
+    }
+    api
+      .bulkImport(documents)
+      .then((res) => {
+        setStatus({
+          kind: 'ok',
+          text: `Indexed ${res.indexed} document${res.indexed === 1 ? '' : 's'}.`,
+        });
+        setText('');
+        onDone();
+      })
+      .catch((err: unknown) =>
+        setStatus({ kind: 'error', text: err instanceof Error ? err.message : 'Import failed' }),
+      )
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <p className="notice">
+        Paste the same JSON <code>beacon import</code> accepts: an array of documents, or{' '}
+        <code>{'{ "documents": [ ... ] }'}</code>. Each item may set <code>id</code>,{' '}
+        <code>title</code>, <code>body</code>, <code>url</code>, <code>tags</code>, and{' '}
+        <code>source</code>.
+      </p>
+      <label>
+        JSON
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} required />
+      </label>
+      <button type="submit" className="btn" disabled={busy || text.trim() === ''}>
+        {busy ? 'Importing…' : 'Import'}
       </button>
       {status && (
         <p className={status.kind === 'ok' ? 'notice notice--ok' : 'notice notice--error'}>
@@ -1548,26 +1856,34 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
   const [url, setUrl] = useState('');
   const [maxPages, setMaxPages] = useState('25');
   const [tags, setTags] = useState('');
+  const [sameOriginOnly, setSameOriginOnly] = useState(true);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [report, setReport] = useState<{
+    errors: Array<{ url: string; error: string }>;
+    skipped: Array<{ url: string; reason: string }>;
+  } | null>(null);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setStatus(null);
+    setReport(null);
     api
       .crawl({
         url: url.trim(),
         maxPages: Number(maxPages) || undefined,
+        sameOriginOnly,
         tags: tags
           .split(',')
           .map((t) => t.trim())
           .filter(Boolean),
       })
       .then((res) => {
+        setReport({ errors: res.errors, skipped: res.skipped });
         setStatus({
           kind: 'ok',
-          text: `Crawled ${res.pagesCrawled} pages, indexed ${res.documentsIndexed}, ${res.errors.length} errors.`,
+          text: `Crawled ${res.pagesCrawled} pages, indexed ${res.documentsIndexed}, ${res.errors.length} errors, ${res.skipped.length} skipped.`,
         });
         onDone();
       })
@@ -1580,9 +1896,9 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
   return (
     <form className="form" onSubmit={submit}>
       <p className="notice">
-        Fetches HTML pages starting from a URL, follows same-origin links and indexes the text.
-        Respects <code>robots.txt</code>. Large crawls can take a while — the request completes when
-        the crawl finishes.
+        Fetches HTML pages starting from a URL and indexes the text. Respects{' '}
+        <code>robots.txt</code>. Large crawls can take a while — the request completes when the
+        crawl finishes.
       </p>
       <label>
         Start URL
@@ -1608,6 +1924,14 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
         Tags (comma-separated)
         <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="website" />
       </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={sameOriginOnly}
+          onChange={(e) => setSameOriginOnly(e.target.checked)}
+        />{' '}
+        Same origin only
+      </label>
       <button type="submit" className="btn" disabled={busy || url.trim() === ''}>
         {busy ? 'Crawling…' : 'Start crawl'}
       </button>
@@ -1615,6 +1939,24 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
         <p className={status.kind === 'ok' ? 'notice notice--ok' : 'notice notice--error'}>
           {status.text}
         </p>
+      )}
+      {report && report.errors.length > 0 && (
+        <ul className="answer__gaps">
+          {report.errors.map((item) => (
+            <li key={item.url}>
+              {item.url}: {item.error}
+            </li>
+          ))}
+        </ul>
+      )}
+      {report && report.skipped.length > 0 && (
+        <ul className="answer__gaps">
+          {report.skipped.map((item) => (
+            <li key={`${item.url}-${item.reason}`}>
+              skipped {item.url}: {item.reason}
+            </li>
+          ))}
+        </ul>
       )}
     </form>
   );
@@ -1722,11 +2064,116 @@ function PlateReport({ report }: { report: PlateCheck }): JSX.Element {
   );
 }
 
+function referenceIso(date: string): string | undefined {
+  if (!date) return undefined;
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function PlateOptions({
+  vehicle,
+  mot,
+  index,
+  referenceDate,
+  onVehicle,
+  onMot,
+  onIndex,
+  onReferenceDate,
+}: {
+  vehicle: boolean;
+  mot: boolean;
+  index: boolean;
+  referenceDate: string;
+  onVehicle: (value: boolean) => void;
+  onMot: (value: boolean) => void;
+  onIndex: (value: boolean) => void;
+  onReferenceDate: (value: string) => void;
+}): JSX.Element {
+  return (
+    <div className="plate__opts">
+      <label>
+        <input type="checkbox" checked={vehicle} onChange={(e) => onVehicle(e.target.checked)} />{' '}
+        DVLA vehicle data
+      </label>
+      <label>
+        <input type="checkbox" checked={mot} onChange={(e) => onMot(e.target.checked)} /> MOT
+        history
+      </label>
+      <label>
+        <input type="checkbox" checked={index} onChange={(e) => onIndex(e.target.checked)} /> Save
+        to index
+      </label>
+      <label>
+        Reference date
+        <input
+          type="date"
+          value={referenceDate}
+          onChange={(e) => onReferenceDate(e.target.value)}
+        />
+      </label>
+    </div>
+  );
+}
+
+function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
+  const [vehicle, setVehicle] = useState(true);
+  const [mot, setMot] = useState(true);
+  const [index, setIndex] = useState(false);
+  const [referenceDate, setReferenceDate] = useState('');
+  const [report, setReport] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setReport(initial);
+  }, [initial]);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    api
+      .checkPlate({
+        plate: initial.input,
+        vehicle,
+        mot,
+        index,
+        referenceDate: referenceIso(referenceDate),
+      })
+      .then(setReport)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Check failed'))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <section className="primary-card primary-card--plate">
+      <form className="plate__form" onSubmit={submit}>
+        <PlateOptions
+          vehicle={vehicle}
+          mot={mot}
+          index={index}
+          referenceDate={referenceDate}
+          onVehicle={setVehicle}
+          onMot={setMot}
+          onIndex={setIndex}
+          onReferenceDate={setReferenceDate}
+        />
+        <button type="submit" className="btn" disabled={busy}>
+          {busy ? 'Checking…' : 'Run checks'}
+        </button>
+      </form>
+      {error && <p className="notice notice--error">{error}</p>}
+      <PlateReport report={report} />
+    </section>
+  );
+}
+
 function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
   const [input, setInput] = useState('');
   const [vehicle, setVehicle] = useState(true);
   const [mot, setMot] = useState(true);
   const [index, setIndex] = useState(false);
+  const [referenceDate, setReferenceDate] = useState('');
   const [report, setReport] = useState<PlateCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1736,7 +2183,13 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
     setBusy(true);
     setError(null);
     api
-      .checkPlate({ plate: input.trim(), vehicle, mot, index })
+      .checkPlate({
+        plate: input.trim(),
+        vehicle,
+        mot,
+        index,
+        referenceDate: referenceIso(referenceDate),
+      })
       .then((res) => {
         setReport(res);
         if (index) onDone();
@@ -1761,20 +2214,16 @@ function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
           {busy ? 'Checking…' : 'Run checks'}
         </button>
       </form>
-      <div className="plate__opts">
-        <label>
-          <input type="checkbox" checked={vehicle} onChange={(e) => setVehicle(e.target.checked)} />{' '}
-          DVLA vehicle data
-        </label>
-        <label>
-          <input type="checkbox" checked={mot} onChange={(e) => setMot(e.target.checked)} /> MOT
-          history
-        </label>
-        <label>
-          <input type="checkbox" checked={index} onChange={(e) => setIndex(e.target.checked)} />{' '}
-          Save to index
-        </label>
-      </div>
+      <PlateOptions
+        vehicle={vehicle}
+        mot={mot}
+        index={index}
+        referenceDate={referenceDate}
+        onVehicle={setVehicle}
+        onMot={setMot}
+        onIndex={setIndex}
+        onReferenceDate={setReferenceDate}
+      />
 
       {error && <p className="notice notice--error">{error}</p>}
 
@@ -1855,10 +2304,10 @@ function DocsView(): JSX.Element {
       </p>
       <h3>Number plate checker</h3>
       <p>
-        Typing <code>plate AB12CDE</code> into the universal box runs the offline checks (format,
-        age identifier, DVLA region) inline. The advanced tool in Settings adds DVLA tax/MOT status
-        and DVSA MOT history lookups when API keys are configured. Offline checks need no
-        credentials.
+        Typing <code>plate AB12CDE</code> into the universal box runs the same checks as the tool
+        under Settings: format, age, and region, plus DVLA vehicle data and DVSA MOT history when
+        those providers are configured. The card can set a reference date and save the check.
+        Offline checks need no credentials.
       </p>
       <h3>CLI &amp; MCP</h3>
       <p>
@@ -1955,11 +2404,22 @@ function coerceClientValue(def: SettingDefinition, raw: unknown): unknown {
   return def.type === 'select' && typeof def.defaultValue === 'number' ? Number(raw) : raw;
 }
 
+function serverDefsFor(
+  section: SettingSection,
+  serverSettings: SettingsEntry[],
+  llmNames: readonly string[],
+): SettingDefinition[] {
+  return serverSettings
+    .map((entry) => serverEntryToDefinition(entry, llmNames))
+    .filter((def) => inSection(def, section));
+}
+
 function SettingsSection({
   title,
   section,
   clientSettings,
   serverSettings,
+  llmNames,
   pendingServer,
   serverErrors,
   onServerChange,
@@ -1969,12 +2429,16 @@ function SettingsSection({
   section: SettingSection;
   clientSettings: ClientSettingsApi;
   serverSettings: SettingsEntry[];
+  llmNames: readonly string[];
   pendingServer: Record<string, boolean | number | string>;
   serverErrors: Record<string, string>;
   onServerChange: (def: SettingDefinition, value: unknown) => void;
   onReset: () => void;
 }): JSX.Element {
-  const defs = settingsInSection(section);
+  const defs = [
+    ...clientSettingsInSection(section),
+    ...serverDefsFor(section, serverSettings, llmNames),
+  ];
   return (
     <section className="settings__section">
       <div className="settings__section-head">
@@ -2040,9 +2504,21 @@ const PROVIDER_GROUPS: Array<ProviderStatus['group']> = ['web', 'network', 'vehi
 function SourcesSection({
   providers,
   onTested,
+  region,
+  serverSettings,
+  llmNames,
+  pendingServer,
+  serverErrors,
+  onServerChange,
 }: {
   providers: ProviderStatus[] | null;
   onTested: () => void;
+  region: unknown;
+  serverSettings: SettingsEntry[];
+  llmNames: readonly string[];
+  pendingServer: Record<string, boolean | number | string>;
+  serverErrors: Record<string, string>;
+  onServerChange: (def: SettingDefinition, value: unknown) => void;
 }): JSX.Element {
   const [testing, setTesting] = useState<string | null>(null);
 
@@ -2066,6 +2542,23 @@ function SourcesSection({
         Every source Beacon can actually use right now, derived live from its configuration —
         nothing here is hard-coded.
       </p>
+      <div className="settings__fields">
+        {serverDefsFor('sources', serverSettings, llmNames).map((def) => {
+          const entry = serverSettings.find((e) => e.id === def.id);
+          if (!entry) return null;
+          const pendingVal = pendingServer[def.id];
+          return (
+            <SettingField
+              key={def.id}
+              def={def}
+              value={pendingVal !== undefined ? pendingVal : entry.value}
+              error={serverErrors[def.id]}
+              pending={pendingVal !== undefined}
+              onChange={(v) => onServerChange(def, v)}
+            />
+          );
+        })}
+      </div>
       {!providers && <p className="notice">Loading…</p>}
       {providers &&
         PROVIDER_GROUPS.map((group) => {
@@ -2087,7 +2580,9 @@ function SourcesSection({
                       <span className="provider-row__latency">{p.latencyMs} ms</span>
                     )}
                     {p.lastCheckedAt && (
-                      <span className="provider-row__checked">{relativeTime(p.lastCheckedAt)}</span>
+                      <span className="provider-row__checked">
+                        {relativeTime(p.lastCheckedAt, region)}
+                      </span>
                     )}
                     {p.testable && (
                       <button
@@ -2112,6 +2607,7 @@ function SourcesSection({
 function PrivacySection({
   clientSettings,
   serverSettings,
+  llmNames,
   serverErrors,
   onServerChange,
   onReset,
@@ -2120,13 +2616,17 @@ function PrivacySection({
 }: {
   clientSettings: ClientSettingsApi;
   serverSettings: SettingsEntry[];
+  llmNames: readonly string[];
   serverErrors: Record<string, string>;
   onServerChange: (def: SettingDefinition, value: unknown) => void;
   onReset: () => void;
   historyCount: number;
   onClearHistory: () => void;
 }): JSX.Element {
-  const defs = settingsInSection('privacy');
+  const defs = [
+    ...clientSettingsInSection('privacy'),
+    ...serverDefsFor('privacy', serverSettings, llmNames),
+  ];
   return (
     <section className="settings__section">
       <div className="settings__section-head">
@@ -2198,7 +2698,7 @@ function PrivacySection({
   );
 }
 
-const RANKING_IDS = ['answerTrustedDomains'];
+const RANKING_IDS = ['answerTrustedDomains', 'answerStripTrackingParams'];
 const NETWORK_IDS = ['lookupsTimeoutMs'];
 const CRAWL_IDS = [
   'crawlMaxPages',
@@ -2219,25 +2719,41 @@ const MASTER_IDS = ['answerEnabled'];
 
 function AdvancedSection({
   serverSettings,
+  llmNames,
   pendingServer,
   serverErrors,
   onServerChange,
   onReset,
   diagnostics,
   onDocumentsChanged,
+  pageSize,
+  region,
 }: {
   serverSettings: SettingsEntry[];
+  llmNames: readonly string[];
   pendingServer: Record<string, boolean | number | string>;
   serverErrors: Record<string, string>;
   onServerChange: (def: SettingDefinition, value: unknown) => void;
   onReset: () => void;
   diagnostics: DiagnosticsResponse | null;
   onDocumentsChanged: () => void;
+  pageSize: number;
+  region: unknown;
 }): JSX.Element {
+  const defs = serverSettings.map((entry) => serverEntryToDefinition(entry, llmNames));
   const byIds = (ids: string[]) =>
     ids
-      .map((id) => SERVER_SETTINGS.find((d) => d.id === id))
+      .map((id) => defs.find((d) => d.id === id))
       .filter((d): d is SettingDefinition => Boolean(d));
+  const grouped = new Set<string>([
+    ...RANKING_IDS,
+    ...NETWORK_IDS,
+    ...CRAWL_IDS,
+    ...LOCAL_INDEX_IDS,
+    ...TIMEOUT_IDS,
+    ...MASTER_IDS,
+  ]);
+  const other = defs.filter((def) => def.section === 'advanced' && !grouped.has(def.id));
 
   const field = (def: SettingDefinition) => {
     const entry = serverSettings.find((e) => e.id === def.id);
@@ -2294,7 +2810,7 @@ function AdvancedSection({
       <details className="settings__group">
         <summary>Local index</summary>
         <div className="settings__fields">{byIds(LOCAL_INDEX_IDS).map(field)}</div>
-        <LibraryView onDone={onDocumentsChanged} />
+        <LibraryView onDone={onDocumentsChanged} pageSize={pageSize} region={region} />
         <h3 className="settings__subhead">Number plate checker (advanced)</h3>
         <PlateView onDone={onDocumentsChanged} />
       </details>
@@ -2308,6 +2824,13 @@ function AdvancedSection({
         <summary>Answer engine (master switch)</summary>
         <div className="settings__fields">{byIds(MASTER_IDS).map(field)}</div>
       </details>
+
+      {other.length > 0 && (
+        <details className="settings__group">
+          <summary>Other</summary>
+          <div className="settings__fields">{other.map(field)}</div>
+        </details>
+      )}
 
       <details className="settings__group">
         <summary>API</summary>
@@ -2363,7 +2886,7 @@ function AdvancedSection({
             </div>
             <div>
               <dt>Last checked</dt>
-              <dd>{relativeTime(diagnostics.checkedAt)}</dd>
+              <dd>{relativeTime(diagnostics.checkedAt, region)}</dd>
             </div>
             <div>
               <dt>Documents</dt>
@@ -2380,7 +2903,9 @@ function AdvancedSection({
             <div>
               <dt>Last persisted</dt>
               <dd>
-                {diagnostics.lastPersistedAt ? relativeTime(diagnostics.lastPersistedAt) : 'never'}
+                {diagnostics.lastPersistedAt
+                  ? relativeTime(diagnostics.lastPersistedAt, region)
+                  : 'never'}
               </dd>
             </div>
           </dl>
@@ -2400,11 +2925,13 @@ const HEALTH_ROW_LABEL: Partial<Record<string, string>> = {
 function HealthPanel({
   diagnostics,
   health,
+  region,
   onRefresh,
   onSeeDetails,
 }: {
   diagnostics: DiagnosticsResponse | null;
   health: HealthResponse | null;
+  region: unknown;
   onRefresh: () => void;
   onSeeDetails: () => void;
 }): JSX.Element {
@@ -2470,7 +2997,7 @@ function HealthPanel({
       {diagnostics && (
         <p className="health__foot">
           Uptime {Math.round(diagnostics.uptimeSeconds / 60)}m · checked{' '}
-          {relativeTime(diagnostics.checkedAt)}
+          {relativeTime(diagnostics.checkedAt, region)}
           {health ? ` · ${health.documents.toLocaleString()} documents` : ''}
         </p>
       )}
@@ -2563,8 +3090,8 @@ function SettingsView({
     setSaving(true);
     const patch: Record<string, boolean | number | string> = {};
     for (const [id, raw] of Object.entries(pendingServer)) {
-      const def = SERVER_SETTINGS.find((d) => d.id === id);
-      patch[id] = def?.type === 'number' ? Number(raw) : raw;
+      const entry = serverSettings.find((item) => item.id === id);
+      patch[id] = entry?.type === 'number' ? Number(raw) : raw;
     }
     api
       .patchSettings(patch)
@@ -2589,8 +3116,16 @@ function SettingsView({
     setServerErrors({});
   };
 
+  const llmNames = health?.answer.llm ?? [];
+  const pageSize = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
+  const region = clientSettings.values.region;
+  const liveServerDefs = serverSettings.map((entry) => serverEntryToDefinition(entry, llmNames));
+
   const resetSection = (target: SettingSection) => {
-    const defs = settingsInSection(target);
+    const defs = [
+      ...clientSettingsInSection(target),
+      ...liveServerDefs.filter((def) => inSection(def, target)),
+    ];
     const clientIds = defs.filter((d) => d.scope === 'client').map((d) => d.id);
     const serverIds = defs.filter((d) => d.scope === 'server').map((d) => d.id);
     if (clientIds.length > 0) clientSettings.resetIds(clientIds);
@@ -2618,13 +3153,14 @@ function SettingsView({
   };
 
   const pendingCount = Object.keys(pendingServer).length;
-  const foundSettings = settingsQuery.trim() ? searchSettings(settingsQuery) : [];
+  const foundSettings = settingsQuery.trim() ? searchSettings(settingsQuery, liveServerDefs) : [];
 
   return (
     <section className="settings">
       <HealthPanel
         diagnostics={diagnostics}
         health={health}
+        region={region}
         onRefresh={refreshAll}
         onSeeDetails={() => setSection('advanced')}
       />
@@ -2682,6 +3218,7 @@ function SettingsView({
               section="general"
               clientSettings={clientSettings}
               serverSettings={serverSettings}
+              llmNames={llmNames}
               pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
@@ -2694,6 +3231,7 @@ function SettingsView({
               section="search"
               clientSettings={clientSettings}
               serverSettings={serverSettings}
+              llmNames={llmNames}
               pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
@@ -2701,7 +3239,16 @@ function SettingsView({
             />
           )}
           {section === 'sources' && (
-            <SourcesSection providers={providers} onTested={refreshProviders} />
+            <SourcesSection
+              providers={providers}
+              onTested={refreshProviders}
+              region={region}
+              serverSettings={serverSettings}
+              llmNames={llmNames}
+              pendingServer={pendingServer}
+              serverErrors={serverErrors}
+              onServerChange={handleServerChange}
+            />
           )}
           {section === 'ai' && (
             <SettingsSection
@@ -2709,6 +3256,7 @@ function SettingsView({
               section="ai"
               clientSettings={clientSettings}
               serverSettings={serverSettings}
+              llmNames={llmNames}
               pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
@@ -2719,6 +3267,7 @@ function SettingsView({
             <PrivacySection
               clientSettings={clientSettings}
               serverSettings={serverSettings}
+              llmNames={llmNames}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
               onReset={() => resetSection('privacy')}
@@ -2729,12 +3278,15 @@ function SettingsView({
           {section === 'advanced' && (
             <AdvancedSection
               serverSettings={serverSettings}
+              llmNames={llmNames}
               pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
               onReset={() => resetSection('advanced')}
               diagnostics={diagnostics}
               onDocumentsChanged={refreshAll}
+              pageSize={pageSize}
+              region={region}
             />
           )}
         </div>
