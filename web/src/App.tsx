@@ -434,7 +434,9 @@ function SearchView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const query = useDebounced(input, 400);
+  const debouncedQuery = useDebounced(input, 400);
+  const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
+  const query = submittedQuery === input.trim() ? submittedQuery : debouncedQuery;
   const answerQuery = useDebounced(input.trim(), 900);
   const historyQuery = useDebounced(input.trim(), 1500);
   const abortRef = useRef<AbortController | null>(null);
@@ -604,6 +606,7 @@ function SearchView({
   }, [suggestions]);
 
   const pickSuggestion = (s: string) => {
+    setSubmittedQuery(null);
     onInputChange(s);
     setSuggestOpen(false);
     setActiveSuggestion(-1);
@@ -658,6 +661,16 @@ function SearchView({
   );
   const showReady = Boolean(result && !query.trim() && hits.length === 0 && !loading);
 
+  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const q = input.trim();
+    if (!q) return;
+    setSubmittedQuery(q);
+    setSuggestOpen(false);
+    setActiveSuggestion(-1);
+    setRetryNonce((n) => n + 1);
+  };
+
   const runAction = (action: SearchAction) => {
     if (action.id === 'add') {
       setAddOpen(true);
@@ -670,6 +683,7 @@ function SearchView({
       setRetryNonce((n) => n + 1);
       return;
     }
+    setSubmittedQuery(null);
     onInputChange(action.query);
   };
 
@@ -696,14 +710,15 @@ function SearchView({
       .finally(() => setAddingSource(false));
   };
   return (
-    <section className="search">
-      <div className="search__box">
+    <section className="search" data-search-intent={result?.intent}>
+      <form className="search__box" onSubmit={submitSearch} role="search">
         <input
           type="search"
           autoFocus
           placeholder="Search anything…"
           value={input}
           onChange={(event) => {
+            setSubmittedQuery(null);
             onInputChange(event.target.value);
             setSuggestOpen(true);
           }}
@@ -738,16 +753,9 @@ function SearchView({
             activeSuggestion >= 0 ? `search-suggest-${activeSuggestion}` : undefined
           }
         />
-        {input && (
-          <button
-            type="button"
-            className="search__clear"
-            onClick={() => onInputChange('')}
-            aria-label="Clear search"
-          >
-            clear
-          </button>
-        )}
+        <button type="submit" className="search__submit" disabled={!input.trim()}>
+          Search
+        </button>
         {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
           <ul className="suggest" role="listbox" id="search-suggest-list">
             {suggestions.map((s, i) => (
@@ -770,7 +778,7 @@ function SearchView({
             ))}
           </ul>
         )}
-      </div>
+      </form>
 
       {error && <p className="notice notice--error">{error}</p>}
 
@@ -791,7 +799,7 @@ function SearchView({
         )}
 
       {loading && query.trim() && (
-        <p className="search__status">Searching web and connected sources…</p>
+        <p className="search__status">Searching your index and available sources…</p>
       )}
 
       {answerError && answerRequested && (
@@ -809,14 +817,14 @@ function SearchView({
       )}
 
       {!loading && answerLoading && hits.length > 0 && (
-        <p className="search__status">Checking whether these results support a summary…</p>
+        <p className="search__status">Building a source-backed summary…</p>
       )}
 
       {!answerLoading &&
         ((hits.length > 0 && answer && !answerHasProse) ||
           (synthesis === 'insufficient' && !answerRequested)) && (
           <p className="search__summary-note">
-            Results found for “{query.trim()}”, but there isn’t enough evidence to write a summary.
+            I found links for “{query.trim()}”, but their pages did not provide enough reliable text to summarize. Open a source below or try a broader search.
           </p>
         )}
 
@@ -824,9 +832,6 @@ function SearchView({
         <p className="search__meta">
           <strong>{formatCount(result.total, region)}</strong> result{result.total === 1 ? '' : 's'}
           {result.query ? ` for “${result.query}”` : ''}
-          {' · '}
-          {result.tookMs} ms
-          {result.intent !== 'general' ? ` · ${result.intent}` : ''}
           {hasFilters && (
             <button
               type="button"
@@ -906,7 +911,7 @@ function SearchView({
 
       <ol className="results">
         {hits.map((hit) => (
-          <li key={hit.id} className="result">
+          <li key={hit.id} className="result" data-search-score={hit.score}>
             <h3 className="result__title">
               {hit.url ? (
                 <a href={hit.url} target={openInNewTab ? '_blank' : undefined} rel="noreferrer">
@@ -921,8 +926,8 @@ function SearchView({
               <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
             )}
             <div className="result__foot">
-              <span className="result__source" data-score={hit.score}>
-                {hit.origin === 'web' ? 'web' : 'index'} · {hit.provider}
+              <span className="result__source">
+                {hit.origin === 'web' ? `Web · ${hit.provider}` : `Your index · ${hit.provider}`}
               </span>
               {hit.updatedAt && <span>{relativeTime(hit.updatedAt, region)}</span>}
               {hit.tags.map((tag) => (
@@ -945,27 +950,34 @@ function SearchView({
           <div className={showEmpty ? 'empty empty--quiet' : 'search__actions'}>
             {showEmpty && (
               <>
-                <strong>No strong matches found for “{query.trim()}”.</strong>
+                <strong>No good matches for “{query.trim()}”.</strong>
                 <span>
                   {result.outcome === 'unconfigured'
-                    ? 'Web search is not set up on this server.'
-                    : `Searched ${result.attempted.join(', ')}.`}
+                    ? 'No live search sources are connected. Add pages to your index or enable a web source.'
+                    : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
                 </span>
               </>
             )}
             <div className="empty__actions">
-              {result.actions.map((action) => (
-                <button
-                  key={action.id}
-                  type="button"
-                  className="chip"
-                  onClick={() => runAction(action)}
-                >
-                  {action.label}
+              {result.actions
+                .filter((action) => action.id !== 'add')
+                .map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className="chip"
+                    onClick={() => runAction(action)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              {showEmpty && (
+                <button type="button" className="chip" onClick={() => setAddOpen((open) => !open)}>
+                  {addOpen ? 'Cancel' : 'Add a source'}
                 </button>
-              ))}
+              )}
             </div>
-            {(addOpen || showEmpty) && (
+            {addOpen && (
               <form className="empty__add" onSubmit={submitSource}>
                 <input
                   value={sourceUrl}
@@ -1007,6 +1019,7 @@ function SearchView({
       {result && query.trim() && (
         <details className="devdetails">
           <summary>Search details</summary>
+          <p>Sources checked: {result.attempted.join(', ')}</p>
           {result.queriesTried.length > 0 && <p>Tried {result.queriesTried.join(' → ')}</p>}
           <ul>
             {result.diagnostics.map((item) => (
@@ -1548,29 +1561,27 @@ function AnswerCard({
       className="answer"
       aria-busy={loading}
       aria-label={data ? `Answer for ${data.query}` : 'Answer'}
+      data-identity-confidence={data?.identityConfidence}
+      data-source-quality={data?.sourceQuality}
     >
       <div className="answer__head">
-        <span className="answer__tag">ANSWER</span>
+        <span className="answer__tag">SOURCE-BACKED SUMMARY</span>
         {data && <ConfidenceBadge confidence={data.confidence} />}
         {data?.cached && <span className="badge badge--muted">cached</span>}
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />
         {data && (
           <button type="button" className="answer__refresh" onClick={onRefresh}>
-            re-run
+            Refresh summary
           </button>
         )}
       </div>
 
-      {!data && loading && <p className="answer__body answer__body--wait">weaving an answer…</p>}
+      {!data && loading && <p className="answer__body answer__body--wait">Reading sources and preparing a cited summary…</p>}
 
       {data && (
         <>
           <p className="answer__reason">{data.confidenceReason}</p>
-          <p className="answer__reason">
-            identity {Math.round(data.identityConfidence * 100)}% · source quality{' '}
-            {Math.round(data.sourceQuality * 100)}%{data.cached ? ' · cached' : ''}
-          </p>
           {data.warnings.length > 0 && (
             <ul className="answer__gaps">
               {data.warnings.map((warning, i) => (

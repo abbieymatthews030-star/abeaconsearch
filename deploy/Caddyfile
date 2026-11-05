@@ -1,0 +1,18 @@
+{$BEACON_DOMAIN} {
+    encode zstd gzip
+
+    basic_auth {
+        {$BEACON_USER} {$BEACON_PASSWORD_HASH}
+    }
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Strict-Transport-Security "max-age=31536000"
+        -Server
+    }
+
+    reverse_proxy beacon:7700
+}

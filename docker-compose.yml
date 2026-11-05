@@ -1,46 +1,62 @@
 services:
   beacon:
     build: .
-    image: abeaconsearch:latest
-    ports:
-      - '7700:7700'
+    image: abeaconsearch:local
     environment:
+      BEACON_HOST: 0.0.0.0
       BEACON_LOG_LEVEL: info
-      BEACON_CRAWL_MAX_PAGES: '100'
-      # Answer-weave's web search, backed by the self-hosted SearXNG below —
-      # a fully open-source meta-search engine, no API key required. Unset
-      # BEACON_ANSWER_WEB_SEARCH (or remove the searxng service) to run
-      # index-only, or point SEARXNG_URL at your own instance instead.
-      BEACON_ANSWER_WEB_SEARCH: searxng
-      SEARXNG_URL: http://searxng:8080
+      BEACON_CRAWL_MAX_PAGES: '50'
+      BEACON_RATE_LIMIT_MAX: '120'
+      BEACON_RATE_LIMIT_WINDOW_MS: '60000'
+      BEACON_ANSWER_WEB_SEARCH: ''
+      BEACON_LOOKUPS_ENABLED: 'false'
+      BEACON_ANSWER_ALLOW_PRIVATE: 'false'
+      BEACON_CRAWL_ALLOW_PRIVATE: 'false'
     volumes:
       - beacon-data:/data
-    depends_on:
-      searxng:
-        condition: service_healthy
-    restart: unless-stopped
-
-  searxng:
-    image: docker.io/searxng/searxng:latest
-    # Not published to the host — only `beacon` talks to it, over the
-    # compose network. Publish 8080 yourself if you also want its own UI.
     expose:
-      - '8080'
+      - '7700'
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      BEACON_DOMAIN: ${BEACON_DOMAIN:?Set BEACON_DOMAIN in .env}
+      BEACON_USER: ${BEACON_USER:?Set BEACON_USER in .env}
+      BEACON_PASSWORD_HASH: ${BEACON_PASSWORD_HASH:?Set BEACON_PASSWORD_HASH in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
     volumes:
-      - ./searxng:/etc/searxng:rw
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - beacon
+    restart: unless-stopped
     cap_drop:
       - ALL
     cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-    restart: unless-stopped
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app
 
 volumes:
   beacon-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  app:

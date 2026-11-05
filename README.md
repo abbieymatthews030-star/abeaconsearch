@@ -29,19 +29,50 @@ npm start
 # → http://localhost:7700
 ```
 
-### With Docker
+### Deploy on a website server (Docker Compose)
 
-```bash
-docker compose up --build
-# → http://localhost:7700   (index persisted in the `beacon-data` volume)
-```
+The production Compose setup puts Caddy in front of Beacon Search. Caddy obtains
+and renews HTTPS certificates automatically and requires a username and password.
+The app itself has no published host port; only Caddy's HTTP/HTTPS ports are
+public. The index and Caddy certificates persist in Docker volumes. No external
+search service or API keys are needed for the basic setup.
 
-or plain Docker:
+1. Point a domain's DNS `A`/`AAAA` records at the server and allow inbound TCP
+   ports 80 and 443 (UDP 443 is optional, for HTTP/3).
+2. On the server, clone this repository over SSH or HTTPS and enter its folder.
+   The source files are only used to build the container; the website serves the
+   compiled UI and API, not the source repository.
+3. Create the private environment file and credentials:
 
-```bash
-docker build -t abeaconsearch .
-docker run -p 7700:7700 -v beacon-data:/data abeaconsearch
-```
+   ```sh
+   cp deploy/.env.example .env
+   ```
+
+   Edit `.env` with your domain and username. Generate a strong password hash:
+
+   ```sh
+   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'a-long-unique-password'
+   ```
+
+   Paste the output as `BEACON_PASSWORD_HASH` in `.env`. Keep `.env private; it
+   is excluded from Git.
+4. Start the site:
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+   Visit `https://your-domain`. Update with `git pull && docker compose up -d --build` when you choose to install a new version. Back up the `beacon-data`
+   Docker volume to preserve the index.
+
+This setup protects the whole UI and API with the same password. For public,
+unauthenticated search, remove the `basic_auth` block from `deploy/Caddyfile`
+only if that is intended, and review API write endpoints first. The open-source
+repository remains public; deploying it does not publish the source files from
+your website server.
+
+For local development, use `npm run dev` or run the app behind your own trusted
+reverse proxy. Avoid publishing port 7700 directly on an internet-facing server.
 
 ### Development (API + UI with hot reload)
 

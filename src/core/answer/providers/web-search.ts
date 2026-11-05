@@ -58,7 +58,11 @@ export class BraveSearchProvider implements WebSearchProvider {
     };
     return (body.web?.results ?? [])
       .filter((r): r is { title?: string; url: string; description?: string } => Boolean(r.url))
-      .map((r) => ({ title: r.title ?? r.url, url: r.url, snippet: r.description }));
+      .map((r) => ({
+        title: stripTags(r.title ?? r.url),
+        url: r.url,
+        snippet: r.description ? stripTags(r.description) : undefined,
+      }));
   }
 }
 
@@ -100,7 +104,11 @@ export class TavilySearchProvider implements WebSearchProvider {
     };
     return (body.results ?? [])
       .filter((r): r is { title?: string; url: string; content?: string } => Boolean(r.url))
-      .map((r) => ({ title: r.title ?? r.url, url: r.url, snippet: r.content }));
+      .map((r) => ({
+        title: stripTags(r.title ?? r.url),
+        url: r.url,
+        snippet: r.content ? stripTags(r.content) : undefined,
+      }));
   }
 }
 
@@ -137,7 +145,11 @@ export class SearxngProvider implements WebSearchProvider {
     return (body.results ?? [])
       .filter((r): r is { title?: string; url: string; content?: string } => Boolean(r.url))
       .slice(0, limit)
-      .map((r) => ({ title: r.title ?? r.url, url: r.url, snippet: r.content }));
+      .map((r) => ({
+        title: stripTags(r.title ?? r.url),
+        url: r.url,
+        snippet: r.content ? stripTags(r.content) : undefined,
+      }));
   }
 }
 
@@ -145,10 +157,10 @@ const SEARCH_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 function stripTags(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Search APIs commonly return HTML snippets (and encoded apostrophes/quotes).
+  // Cheerio turns both into plain readable text before the UI highlights it.
+  const $ = cheerio.load(value);
+  return $.text().replace(/\s+/g, ' ').trim();
 }
 
 function unwrapDuckDuckGoUrl(href: string): string | null {

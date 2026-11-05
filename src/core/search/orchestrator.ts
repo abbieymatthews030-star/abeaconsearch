@@ -134,7 +134,7 @@ function indexHits(
         id: doc.id,
         title: hit.title,
         url: doc.url,
-        snippet: hit.snippet,
+        snippet: highlight(plainSnippet, significantTokens(search.q)),
         domain,
         origin: 'index',
         provider: doc.source || 'Local index',
@@ -228,7 +228,9 @@ function outcomeFor(results: number, diagnostics: SearchDiagnostic[]): SearchOut
 
 function synthesisFor(query: string, results: Ranked[]): SynthesisState {
   if (!query.trim() || results.length === 0) return 'not_applicable';
-  return results.some((item) => item.summaryReady) ? 'possible' : 'insufficient';
+  return results.some((item) => item.summaryReady || item.hit.origin === 'web')
+    ? 'possible'
+    : 'insufficient';
 }
 
 /**

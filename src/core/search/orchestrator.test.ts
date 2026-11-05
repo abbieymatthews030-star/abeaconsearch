@@ -199,7 +199,7 @@ describe('runUniversalSearch', () => {
     expect(result.synthesis).toBe('not_applicable');
   });
 
-  it('keeps useful links when there is not enough text to synthesize an answer', async () => {
+  it('allows retrieved web pages to supply a cited summary', async () => {
     const engine = new SearchEngine();
     const result = await runUniversalSearch({
       query: 'abbiey matthews',
@@ -218,7 +218,7 @@ describe('runUniversalSearch', () => {
     });
 
     expect(result.results.length).toBeGreaterThan(0);
-    expect(result.synthesis).toBe('insufficient');
+    expect(result.synthesis).toBe('possible');
     expect(result.outcome).toBe('results');
   });
 
