@@ -25,6 +25,21 @@ describe('classifyQuery', () => {
     expect(classifyQuery('plate ABC123 victoria')).toEqual({ kind: 'plate', value: 'ABC123' });
   });
 
+  it('classifies "plate <country> <reg>" when the country code is known', () => {
+    expect(classifyQuery('plate FR AB-123-CD')).toEqual({
+      kind: 'plate',
+      value: 'AB-123-CD',
+      country: 'FR',
+    });
+    expect(classifyQuery('plate US ABC1234')).toEqual({
+      kind: 'plate',
+      value: 'ABC1234',
+      country: 'US',
+    });
+    // Two-letter token that is not a country stays part of a normal plate query
+    expect(classifyQuery('plate ZZ ABC123')).toEqual({ kind: 'plate', value: 'ZZ' });
+  });
+
   it('falls back to a plain search for everything else', () => {
     expect(classifyQuery('react hooks')).toEqual({ kind: 'general', value: 'react hooks' });
     expect(classifyQuery('node.js framework')).toEqual({

@@ -1334,6 +1334,31 @@ button {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.plate__country-select,
+.plate__country select {
+  font: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  border: 2px solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0.55rem 0.7rem;
+  min-width: 11rem;
+  max-width: 18rem;
+  cursor: pointer;
+}
+
+.plate__country--inline {
+  display: flex;
+  align-items: stretch;
+}
+
+.plate__country--inline .plate__country-select {
+  height: 100%;
 }
 
 .plate__input {
@@ -1371,8 +1396,36 @@ button {
   cursor: pointer;
 }
 
+.plate__opts .plate__country {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
 .plate__opts input {
   accent-color: var(--fg);
+}
+
+.plate__country-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .plate__report {

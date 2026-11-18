@@ -12,6 +12,7 @@ import {
   type HealthResponse,
   type IpPrimary,
   type PlateCheck,
+  type PlateCountryInfo,
   type PrimaryResult,
   type ProviderStatus,
   type QueryKind,
@@ -2362,6 +2363,12 @@ function PlateReport({ report }: { report: PlateCheck }): JSX.Element {
 
       <dl className="plate__facts">
         <div>
+          <dt>Country</dt>
+          <dd>
+            {report.country?.name ?? 'United Kingdom'} ({report.country?.code ?? 'GB'})
+          </dd>
+        </div>
+        <div>
           <dt>Format</dt>
           <dd>{report.format}</dd>
         </div>
@@ -2449,34 +2456,113 @@ function referenceIso(date: string): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
+function usePlateCountries(): {
+  countries: PlateCountryInfo[];
+  defaultCountry: string;
+  ready: boolean;
+} {
+  const [countries, setCountries] = useState<PlateCountryInfo[]>([]);
+  const [defaultCountry, setDefaultCountry] = useState('GB');
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .plateCountries()
+      .then((res) => {
+        if (cancelled) return;
+        setCountries(res.countries);
+        setDefaultCountry(res.defaultCountry || 'GB');
+        setReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCountries([
+          {
+            code: 'GB',
+            name: 'United Kingdom',
+            plateLabel: 'number plate',
+            example: 'AB12 CDE',
+            placeholder: 'AB12 CDE',
+            maxInputLength: 16,
+            authority: 'DVLA / DVA',
+            liveVehicleData: true,
+            liveInspectionHistory: true,
+            summary: 'UK plates',
+          },
+        ]);
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { countries, defaultCountry, ready };
+}
+
 function PlateOptions({
+  country,
+  countries,
   vehicle,
   mot,
   index,
   referenceDate,
+  onCountry,
   onVehicle,
   onMot,
   onIndex,
   onReferenceDate,
 }: {
+  country: string;
+  countries: PlateCountryInfo[];
   vehicle: boolean;
   mot: boolean;
   index: boolean;
   referenceDate: string;
+  onCountry: (value: string) => void;
   onVehicle: (value: boolean) => void;
   onMot: (value: boolean) => void;
   onIndex: (value: boolean) => void;
   onReferenceDate: (value: string) => void;
 }): JSX.Element {
+  const selected = countries.find((c) => c.code === country) ?? countries[0];
+  const liveVehicle = selected?.liveVehicleData ?? false;
+  const liveMot = selected?.liveInspectionHistory ?? false;
+
   return (
     <div className="plate__opts">
-      <label>
-        <input type="checkbox" checked={vehicle} onChange={(e) => onVehicle(e.target.checked)} />{' '}
-        DVLA vehicle data
+      <label className="plate__country">
+        Country
+        <select
+          value={country}
+          onChange={(e) => onCountry(e.target.value)}
+          aria-label="Plate country"
+        >
+          {countries.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.name} ({c.code})
+            </option>
+          ))}
+        </select>
       </label>
       <label>
-        <input type="checkbox" checked={mot} onChange={(e) => onMot(e.target.checked)} /> MOT
-        history
+        <input
+          type="checkbox"
+          checked={vehicle}
+          disabled={!liveVehicle}
+          onChange={(e) => onVehicle(e.target.checked)}
+        />{' '}
+        {liveVehicle ? 'Live vehicle data (DVLA)' : 'Live vehicle data (not available)'}
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={mot}
+          disabled={!liveMot}
+          onChange={(e) => onMot(e.target.checked)}
+        />{' '}
+        {liveMot ? 'MOT history (DVSA)' : 'Inspection history (not available)'}
       </label>
       <label>
         <input type="checkbox" checked={index} onChange={(e) => onIndex(e.target.checked)} /> Save
@@ -2490,11 +2576,14 @@ function PlateOptions({
           onChange={(e) => onReferenceDate(e.target.value)}
         />
       </label>
+      {selected && <p className="plate__country-hint">{selected.summary}</p>}
     </div>
   );
 }
 
 function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
+  const { countries, defaultCountry, ready } = usePlateCountries();
+  const [country, setCountry] = useState(initial.country?.code ?? 'GB');
   const [vehicle, setVehicle] = useState(true);
   const [mot, setMot] = useState(true);
   const [index, setIndex] = useState(false);
@@ -2505,7 +2594,20 @@ function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
 
   useEffect(() => {
     setReport(initial);
+    if (initial.country?.code) setCountry(initial.country.code);
   }, [initial]);
+
+  useEffect(() => {
+    if (ready && !initial.country?.code) setCountry(defaultCountry);
+  }, [ready, defaultCountry, initial.country?.code]);
+
+  useEffect(() => {
+    const selected = countries.find((c) => c.code === country);
+    if (selected && !selected.liveVehicleData) setVehicle(false);
+    if (selected && !selected.liveInspectionHistory) setMot(false);
+    if (selected?.liveVehicleData) setVehicle(true);
+    if (selected?.liveInspectionHistory) setMot(true);
+  }, [country, countries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2531,6 +2633,7 @@ function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
     api
       .checkPlate({
         plate: initial.input,
+        country,
         vehicle,
         mot,
         index,
@@ -2545,16 +2648,19 @@ function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
     <section className="primary-card primary-card--plate">
       <form className="plate__form" onSubmit={submit}>
         <PlateOptions
+          country={country}
+          countries={countries}
           vehicle={vehicle}
           mot={mot}
           index={index}
           referenceDate={referenceDate}
+          onCountry={setCountry}
           onVehicle={setVehicle}
           onMot={setMot}
           onIndex={setIndex}
           onReferenceDate={setReferenceDate}
         />
-        <button type="submit" className="btn" disabled={busy}>
+        <button type="submit" className="btn" disabled={busy || !ready}>
           {busy ? 'Checking…' : 'Run checks'}
         </button>
       </form>
@@ -2571,6 +2677,8 @@ function PlateView({
   onDone: () => void;
   defaultIndex?: boolean;
 }): JSX.Element {
+  const { countries, defaultCountry, ready } = usePlateCountries();
+  const [country, setCountry] = useState('GB');
   const [input, setInput] = useState('');
   const [vehicle, setVehicle] = useState(true);
   const [mot, setMot] = useState(true);
@@ -2580,9 +2688,21 @@ function PlateView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const selected = countries.find((c) => c.code === country) ?? countries[0];
+
   useEffect(() => {
     setIndex(defaultIndex);
   }, [defaultIndex]);
+
+  useEffect(() => {
+    if (ready) setCountry(defaultCountry);
+  }, [ready, defaultCountry]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setVehicle(selected.liveVehicleData);
+    setMot(selected.liveInspectionHistory);
+  }, [selected]);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -2591,6 +2711,7 @@ function PlateView({
     api
       .checkPlate({
         plate: input.trim(),
+        country,
         vehicle,
         mot,
         index,
@@ -2607,23 +2728,42 @@ function PlateView({
   return (
     <section className="plate">
       <form className="plate__form" onSubmit={submit}>
+        <label className="plate__country plate__country--inline">
+          <span className="visually-hidden">Country</span>
+          <select
+            className="plate__country-select"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            aria-label="Plate country"
+            disabled={!ready}
+          >
+            {countries.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name} ({c.code})
+              </option>
+            ))}
+          </select>
+        </label>
         <input
           className="plate__input"
           value={input}
           onChange={(e) => setInput(e.target.value.toUpperCase())}
-          placeholder="AB12 CDE"
+          placeholder={selected?.placeholder ?? 'AB12 CDE'}
           aria-label="Registration mark"
-          maxLength={16}
+          maxLength={selected?.maxInputLength ?? 24}
         />
-        <button type="submit" className="btn" disabled={busy || input.trim() === ''}>
+        <button type="submit" className="btn" disabled={busy || !ready || input.trim() === ''}>
           {busy ? 'Checking…' : 'Run checks'}
         </button>
       </form>
       <PlateOptions
+        country={country}
+        countries={countries}
         vehicle={vehicle}
         mot={mot}
         index={index}
         referenceDate={referenceDate}
+        onCountry={setCountry}
         onVehicle={setVehicle}
         onMot={setMot}
         onIndex={setIndex}
@@ -2661,9 +2801,9 @@ function AboutView({
       <p>
         The Search box is universal. Alongside the local index, Beacon classifies what you typed:
         domains resolve via DNS + RDAP, IPs get reverse DNS + RDAP, arithmetic is evaluated
-        directly, and <code>plate &lt;reg&gt;</code> runs the number plate checker. Questions get a
-        short cited answer woven only from retrieved sources. Optional Tor mode searches onion
-        services through a SOCKS proxy.
+        directly, and <code>plate &lt;reg&gt;</code> or <code>plate FR &lt;reg&gt;</code> runs the
+        worldwide number plate checker. Questions get a short cited answer woven only from retrieved
+        sources. Optional Tor mode searches onion services through a SOCKS proxy.
       </p>
       <h3>Self-host on your domain</h3>
       <p>
@@ -3139,7 +3279,10 @@ function PrivacySection({
             A configured LLM (Anthropic, or an OpenAI-compatible endpoint) receives the retrieved
             source extracts, not your raw query, to write the final answer.
           </li>
-          <li>A plate check sends the registration to the DVLA/DVSA APIs, if configured.</li>
+          <li>
+            A plate check validates the mark for the selected country. For the UK, it can also query
+            DVLA/DVSA when those APIs are configured.
+          </li>
           <li>Nothing else leaves this server. There is no analytics or telemetry in Beacon.</li>
         </ul>
       </div>

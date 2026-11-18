@@ -8,6 +8,7 @@ import type {
   SearchResponse,
   SuggestResponse,
 } from '@core/types';
+import type { CountryInfo } from '@core/plate/countries/types';
 import type { PlateCheck } from '@core/plate/types';
 import type {
   AnswerCandidate,
@@ -100,6 +101,8 @@ export interface DiagnosticsResponse {
 
 export type SearchSort = 'relevance' | 'newest' | 'oldest' | 'title';
 
+export type PlateCountryInfo = CountryInfo;
+
 export interface HealthResponse {
   status: 'ok' | 'degraded';
   documents: number;
@@ -107,7 +110,12 @@ export interface HealthResponse {
   uptimeSeconds: number;
   lastPersistedAt?: string | null;
   lastPersistError?: string | null;
-  plateChecks: { vehicleData: boolean; motHistory: boolean };
+  plateChecks: {
+    vehicleData: boolean;
+    motHistory: boolean;
+    defaultCountry?: string;
+    countries?: PlateCountryInfo[];
+  };
   answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
   lookups: { enabled: boolean };
   tor?: { enabled: boolean; socksUrl: string };
@@ -334,8 +342,12 @@ export const api = {
   clearIndex(): Promise<{ ok: boolean; documents: number }> {
     return request('/api/index/clear', { method: 'POST' });
   },
+  plateCountries(): Promise<{ defaultCountry: string; countries: PlateCountryInfo[] }> {
+    return request('/api/plate/countries');
+  },
   checkPlate(params: {
     plate: string;
+    country?: string;
     vehicle?: boolean;
     mot?: boolean;
     index?: boolean;
@@ -349,6 +361,7 @@ export const api = {
   checkPlateGet(
     plate: string,
     params: {
+      country?: string;
       vehicle?: boolean;
       mot?: boolean;
       index?: boolean;
@@ -357,6 +370,7 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<PlateCheck> {
     const qs = new URLSearchParams();
+    if (params.country) qs.set('country', params.country);
     if (params.vehicle !== undefined) qs.set('vehicle', String(params.vehicle));
     if (params.mot !== undefined) qs.set('mot', String(params.mot));
     if (params.index !== undefined) qs.set('index', String(params.index));

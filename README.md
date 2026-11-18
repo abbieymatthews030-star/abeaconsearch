@@ -7,7 +7,7 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 - **Full-text search** with prefix + fuzzy matching, title/tag boosting, tag facets and highlighted snippets (powered by [MiniSearch](https://github.com/lucaong/minisearch)).
 - **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, and Project Gutenberg.
 - **Answer weave** — question-like queries get a short written answer from retrieved sources (index + live web), with citations, trust tiers, and a confidence banner. When sources are thin or missing, an LLM knowledge fallback still answers (marked unverified). Only bestiality and sexual/physical violence against women are denied.
-- **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
+- **Worldwide number plate checker** — pick a country, validate format (and age/region where that system encodes them). For the UK, optional free DVLA tax/MOT and DVSA MOT history lookups.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
 - **REST API** built on [Fastify](https://fastify.dev/) with schema validation.
 - **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites.
@@ -157,8 +157,9 @@ available as `beacon`.
 | `POST`   | `/api/documents/bulk` | `{ "documents": [...] }`                             |
 | `POST`   | `/api/crawl`          | `{ "url", "maxPages?", "sameOriginOnly?", "tags?" }` |
 | `POST`   | `/api/index/clear`    | Remove all documents                                 |
-| `GET`    | `/api/plate/:reg`     | Check a number plate (`?vehicle=&mot=&index=`)       |
-| `POST`   | `/api/plate/check`    | `{ "plate", "vehicle?", "mot?", "index?" }`          |
+| `GET`    | `/api/plate/countries`| Supported plate countries + examples                 |
+| `GET`    | `/api/plate/:reg`     | Check a plate (`?country=&vehicle=&mot=&index=`)     |
+| `POST`   | `/api/plate/check`    | `{ "plate", "country?", "vehicle?", "mot?", "index?" }` |
 
 ### Search response
 
@@ -189,25 +190,29 @@ available as `beacon`.
 
 ## Number plate checker
 
-Runs a series of automatic checks on a UK vehicle registration mark and returns a
-structured report (each check is `pass` / `warn` / `fail` / `info` / `skipped`):
+Pick a country (ISO 3166-1 alpha-2, default `GB`) and run automatic checks on a
+registration mark. Every check is `pass` / `warn` / `fail` / `info` / `skipped`.
 
-| Check                                                              | Source                                                                                              | Needs               |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------- |
-| Format & character set                                             | offline                                                                                             | —                   |
-| Age identifier → registration date range                           | offline                                                                                             | —                   |
-| Region / former DVLA office (memory tag)                           | offline                                                                                             | —                   |
-| Make, colour, year, fuel, **tax status**, **MOT status**           | [DVLA Vehicle Enquiry Service](https://register-for-vehicle-enquiry-service.service.gov.uk/) (free) | `DVLA_VES_API_KEY`  |
-| Manufacture-year vs plate-age consistency, export marker           | DVLA VES                                                                                            | `DVLA_VES_API_KEY`  |
-| Full MOT history, pass/fail counts, **odometer anomaly** detection | [DVSA MOT History API](https://documentation.history.mot.api.gov.uk/) (free)                        | `MOT_*` credentials |
+| Check                                                              | Where                         | Needs               |
+| ------------------------------------------------------------------ | ----------------------------- | ------------------- |
+| Format & character set for the selected country                    | all countries (offline)       | —                   |
+| Age / series / region decode when the national system encodes it   | e.g. GB, IE, DE, TR, IN, …    | —                   |
+| Make, colour, year, fuel, **tax status**, **MOT status**           | **GB only** — [DVLA VES](https://register-for-vehicle-enquiry-service.service.gov.uk/) | `DVLA_VES_API_KEY`  |
+| Manufacture-year vs plate-age consistency, export marker           | GB — DVLA VES                 | `DVLA_VES_API_KEY`  |
+| Full MOT history, pass/fail counts, **odometer anomaly** detection | GB — [DVSA MOT History](https://documentation.history.mot.api.gov.uk/) | `MOT_*` credentials |
 
-With no credentials the offline checks still run. Configure keys in `.env` — see
-[`.env.example`](.env.example).
+Other countries run accurate offline format (and decode) checks; live vehicle /
+inspection APIs are not wired outside the UK because free open government
+endpoints are not generally available. List jurisdictions with
+`GET /api/plate/countries`.
 
 ```bash
-beacon plate "AB12 CDE"                     # human-readable report
-beacon plate "AB12 CDE" --json --index      # JSON, and store the report in the index
-curl 'http://localhost:7700/api/plate/AB12CDE?vehicle=false&mot=false'
+beacon plate "AB12 CDE"                          # UK (default)
+beacon plate "AB-123-CD" --country FR            # France SIV
+beacon plate "ABC1234" -c US --json
+curl 'http://localhost:7700/api/plate/countries'
+curl 'http://localhost:7700/api/plate/AB12CDE?country=GB&vehicle=false&mot=false'
+# Universal search box:  plate FR AB-123-CD
 ```
 
 Set `BEACON_PLATE_INDEX_RESULTS=true` (or pass `index=true`) to save every check

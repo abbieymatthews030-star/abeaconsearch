@@ -61,6 +61,7 @@ describe('Beacon MCP server', () => {
         'check_number_plate',
         'decode_plate',
         'dvla_vehicle_enquiry',
+        'list_plate_countries',
         'mot_history',
         'validate_plate_format',
       ].sort(),

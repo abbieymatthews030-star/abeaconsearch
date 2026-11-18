@@ -45,6 +45,7 @@ describe('PlateChecker (offline)', () => {
     const report = await checker.check('AB12 CDE');
     expect(report.valid).toBe(true);
     expect(report.format).toBe('current');
+    expect(report.country).toEqual({ code: 'GB', name: 'United Kingdom' });
     expect(report.summary.status).toBe('ok');
     expect(report.summary.fail).toBe(0);
     expect(report.age?.approxYear).toBe(2012);
@@ -164,6 +165,12 @@ describe('PlateChecker (with providers)', () => {
 
   it('reports provider capabilities', () => {
     const checker = new PlateChecker({ vehicleProvider: vehicleProvider({}), now: NOW });
-    expect(checker.capabilities).toEqual({ vehicleData: true, motHistory: false });
+    expect(checker.capabilities).toMatchObject({
+      vehicleData: true,
+      motHistory: false,
+      defaultCountry: 'GB',
+    });
+    expect(checker.capabilities.countries.some((c) => c.code === 'GB')).toBe(true);
+    expect(checker.capabilities.countries.some((c) => c.code === 'US')).toBe(true);
   });
 });

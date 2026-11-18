@@ -57,7 +57,12 @@ export class BeaconClient {
     status: 'ok' | 'degraded';
     documents: number;
     uptimeSeconds: number;
-    plateChecks: { vehicleData: boolean; motHistory: boolean };
+    plateChecks: {
+      vehicleData: boolean;
+      motHistory: boolean;
+      defaultCountry?: string;
+      countries?: Array<{ code: string; name: string }>;
+    };
     answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
     lookups: { enabled: boolean };
   }> {

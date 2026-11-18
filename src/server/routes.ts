@@ -7,7 +7,7 @@ import { CalculationError, evaluateExpression } from '../core/lookups/calculator
 import { lookupDomain } from '../core/lookups/domain.js';
 import { lookupIp } from '../core/lookups/ip.js';
 import type { PlateChecker } from '../core/plate/checker.js';
-import { plateCheckToDocument } from '../core/plate/index.js';
+import { listCountries, normalizeCountryCode, plateCheckToDocument } from '../core/plate/index.js';
 import { ProbeCache, listProviders, testProvider } from '../core/providers.js';
 import {
   classifyQuery,
@@ -37,15 +37,34 @@ import {
   suggestQuerySchema,
 } from '../core/types.js';
 
+const countryParam = z
+  .string()
+  .min(2)
+  .max(32)
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined || value.trim() === '') return undefined;
+    const normalized = normalizeCountryCode(value);
+    if (!normalized) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Unknown plate country "${value}". Use an ISO 3166-1 alpha-2 code (e.g. GB, US, DE, AU).`,
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  });
+
 const plateCheckQuerySchema = z.object({
   vehicle: booleanParam(true),
   mot: booleanParam(true),
   index: optionalBooleanParam,
   referenceDate: z.string().datetime().optional(),
+  country: countryParam,
 });
 
 const plateCheckBodySchema = plateCheckQuerySchema.extend({
-  plate: z.string().min(1).max(16),
+  plate: z.string().min(1).max(24),
 });
 
 const idParam = z.object({ id: z.string().min(1) });
@@ -316,6 +335,7 @@ async function resolvePrimary(
       }
     case 'plate': {
       const data = await plateChecker.check(classified.value, {
+        country: classified.country,
         includeVehicleData: true,
         includeMotHistory: true,
       });
@@ -592,6 +612,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     // --- Number plate checker -------------------------------------------------
     const runPlateCheck = async (plate: string, query: z.infer<typeof plateCheckQuerySchema>) => {
       const check = await plateChecker.check(plate, {
+        country: query.country,
         includeVehicleData: query.vehicle,
         includeMotHistory: query.mot,
         referenceDate: query.referenceDate,
@@ -603,8 +624,13 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       return check;
     };
 
+    app.get('/plate/countries', async () => ({
+      defaultCountry: plateChecker.capabilities.defaultCountry,
+      countries: listCountries(),
+    }));
+
     app.get('/plate/:plate', async (request) => {
-      const { plate } = z.object({ plate: z.string().min(1).max(16) }).parse(request.params);
+      const { plate } = z.object({ plate: z.string().min(1).max(24) }).parse(request.params);
       const query = plateCheckQuerySchema.parse(request.query);
       return runPlateCheck(plate, query);
     });

@@ -1,6 +1,10 @@
-import { decodeAge } from './age.js';
-import { classifyPlate, formatPlate, normalizePlate } from './format.js';
-import { lookupMemoryTag } from './regions.js';
+import {
+  DEFAULT_COUNTRY_CODE,
+  listCountries,
+  resolveCountry,
+  type CountryDefinition,
+} from './countries/index.js';
+import { normalizePlate } from './format.js';
 import type { MotProvider, VehicleProvider } from './providers/types.js';
 import type {
   CheckItem,
@@ -34,10 +38,17 @@ export class PlateChecker {
     this.now = deps.now ?? (() => new Date());
   }
 
-  get capabilities(): { vehicleData: boolean; motHistory: boolean } {
+  get capabilities(): {
+    vehicleData: boolean;
+    motHistory: boolean;
+    defaultCountry: string;
+    countries: ReturnType<typeof listCountries>;
+  } {
     return {
       vehicleData: Boolean(this.vehicleProvider?.configured),
       motHistory: Boolean(this.motProvider?.configured),
+      defaultCountry: DEFAULT_COUNTRY_CODE,
+      countries: listCountries(),
     };
   }
 
@@ -47,13 +58,15 @@ export class PlateChecker {
   }
 
   async check(input: string, options: PlateCheckOptions = {}): Promise<PlateCheck> {
+    const country = resolveCountry(options.country);
     const parsedRef = options.referenceDate ? new Date(options.referenceDate) : null;
     const reference = parsedRef && !Number.isNaN(parsedRef.getTime()) ? parsedRef : this.now();
     const normalized = normalizePlate(input);
-    const classification = classifyPlate(normalized);
-    const formatted = formatPlate(normalized, classification.format);
+    const classification = country.classify(normalized);
+    const formatted = country.formatDisplay(normalized, classification.format);
     const checks: CheckItem[] = [];
-    const sources = new Set<string>(['Offline plate analysis']);
+    const sources = new Set<string>([`Offline ${country.name} plate analysis`]);
+    const notices: string[] = [];
 
     // 1. Format --------------------------------------------------------------
     checks.push({
@@ -61,33 +74,45 @@ export class PlateChecker {
       label: 'Registration format',
       status: classification.valid ? 'pass' : 'fail',
       detail: classification.valid
-        ? `Matches the UK ${classification.format} plate format`
-        : (classification.reason ?? 'Not a recognised UK registration mark'),
-      data: { format: classification.format },
+        ? `Matches the ${country.name} ${classification.format} plate format`
+        : (classification.reason ?? `Not a recognised ${country.name} registration mark`),
+      data: { format: classification.format, country: country.code },
     });
 
     checks.push({
       id: 'characters',
       label: 'Character set',
-      status: /^[A-Z0-9]{1,8}$/.test(normalized) && normalized.length >= 2 ? 'pass' : 'fail',
+      status: /^[A-Z0-9]{1,12}$/.test(normalized) && normalized.length >= 1 ? 'pass' : 'fail',
       detail:
         normalized.length === 0
           ? 'No registration characters supplied'
           : `${normalized.length} characters after normalisation`,
     });
 
-    // 2. Age ---------------------------------------------------------------
-    const age = decodeAge(normalized, classification.format, reference);
-    if (classification.format === 'current') {
+    checks.push({
+      id: 'country',
+      label: 'Country',
+      status: 'info',
+      detail: `${country.name} (${country.code}) — ${country.authority}`,
+      data: { code: country.code, name: country.name },
+    });
+
+    // 2. Country-specific age / region / extra offline checks ----------------
+    const decoded = country.decode(normalized, classification.format, reference);
+    const age = decoded.age;
+    const region = classification.valid ? decoded.region : null;
+
+    if (classification.format !== 'unknown') {
       if (age) {
+        const isGbCurrent = country.code === 'GB' && classification.format === 'current';
         checks.push({
           id: 'age',
           label: 'Age identifier',
-          status: 'pass',
+          status: isGbCurrent ? 'pass' : 'info',
           detail: `"${age.identifier}" → ${age.description} (about ${age.ageYears} years old)`,
           data: { ...age },
         });
-      } else {
+      } else if (country.code === 'GB' && classification.format === 'current') {
         checks.push({
           id: 'age',
           label: 'Age identifier',
@@ -95,84 +120,79 @@ export class PlateChecker {
           detail: `"${normalized.slice(2, 4)}" is not a valid age identifier for a date up to ${reference.toISOString().slice(0, 10)} (future or out-of-range plate)`,
         });
       }
-    } else if (age) {
-      checks.push({
-        id: 'age',
-        label: 'Age identifier',
-        status: 'info',
-        detail: `${age.description} (${classification.format} format, about ${age.ageYears} years old)`,
-        data: { ...age },
-      });
+
+      if (region) {
+        checks.push({
+          id: 'region',
+          label: 'Region of registration',
+          status: country.code === 'GB' && classification.format === 'current' ? 'pass' : 'info',
+          detail: `${region.memoryTag} → ${region.office}, ${region.region} (${region.country})`,
+          data: { ...region },
+        });
+      } else if (country.code === 'GB' && classification.format === 'current') {
+        checks.push({
+          id: 'region',
+          label: 'Region of registration',
+          status: 'warn',
+          detail: `Memory tag "${normalized.slice(0, 2)}" is not in the DVLA table`,
+        });
+      } else if (country.code === 'GB' && classification.format === 'northern-ireland') {
+        // decode() already sets region for NI; kept for clarity if that ever changes
+      }
     }
 
-    // 3. Region (memory tag) --------------------------------------------------
-    let region = null as PlateCheck['region'];
-    if (classification.format === 'current') {
-      region = lookupMemoryTag(normalized.slice(0, 2));
-      checks.push({
-        id: 'region',
-        label: 'Region of registration',
-        status: region ? 'pass' : 'warn',
-        detail: region
-          ? `${normalized.slice(0, 2)} → ${region.office}, ${region.region} (${region.country})`
-          : `Memory tag "${normalized.slice(0, 2)}" is not in the DVLA table`,
-        data: region ? { ...region } : undefined,
-      });
-    } else if (classification.format === 'northern-ireland') {
-      region = {
-        memoryTag: normalized.replace(/[0-9]/g, ''),
-        region: 'Northern Ireland',
-        office: 'Northern Ireland (dateless series)',
-        country: 'Northern Ireland',
-      };
-      checks.push({
-        id: 'region',
-        label: 'Region of registration',
-        status: 'info',
-        detail: 'Northern Ireland dateless format (contains I or Z) — no age can be derived',
-      });
-    }
+    if (decoded.checks) checks.push(...decoded.checks);
+    if (decoded.notices) notices.push(...decoded.notices);
 
-    // 4. DVLA Vehicle Enquiry Service ---------------------------------------
+    // 3. Live vehicle data (GB DVLA today) -----------------------------------
     let vehicle: VehicleRecord | null = null;
-    if ((options.includeVehicleData ?? true) && classification.valid) {
+    const wantVehicle = options.includeVehicleData ?? true;
+    if (wantVehicle && classification.valid && country.liveVehicleData) {
       vehicle = await this.runVehicleLookup(normalized, checks, sources, age, reference);
     } else {
       checks.push({
         id: 'dvla-record',
-        label: 'DVLA vehicle record',
+        label: country.liveVehicleData ? 'DVLA vehicle record' : 'Live vehicle record',
         status: 'skipped',
         detail: !classification.valid
           ? 'Skipped — registration is not structurally valid'
-          : 'Skipped — vehicle data lookup was not requested',
+          : !country.liveVehicleData
+            ? `Skipped — no free live vehicle API is wired for ${country.name}`
+            : 'Skipped — vehicle data lookup was not requested',
       });
     }
 
-    // 5. MOT history -------------------------------------------------------
+    // 4. Inspection history (GB MOT today) -----------------------------------
     let mot: PlateCheck['mot'] = null;
+    const wantMot = options.includeMotHistory ?? true;
     if (
-      (options.includeMotHistory ?? true) &&
+      wantMot &&
       classification.valid &&
+      country.liveInspectionHistory &&
       this.motProvider?.configured
     ) {
       mot = await this.runMotLookup(normalized, checks, sources, reference);
     } else {
       checks.push({
         id: 'mot-history',
-        label: 'MOT test history',
+        label: country.liveInspectionHistory ? 'MOT test history' : 'Inspection history',
         status: 'skipped',
         detail: !classification.valid
           ? 'Skipped — registration is not structurally valid'
-          : (options.includeMotHistory ?? true)
-            ? 'Skipped — DVSA MOT History API credentials are not configured'
-            : 'Skipped — MOT history lookup was not requested',
+          : !country.liveInspectionHistory
+            ? `Skipped — no free inspection-history API is wired for ${country.name}`
+            : wantMot
+              ? 'Skipped — DVSA MOT History API credentials are not configured'
+              : 'Skipped — MOT history lookup was not requested',
       });
     }
 
-    // 6. Theft / finance — no free open API; guidance only (not a check line)
-    const notices: string[] = [
-      'Stolen / outstanding finance / write-off status was not checked — those need a paid provider (e.g. an HPI-style check).',
-    ];
+    // 5. Paid / unavailable status guidance
+    notices.push(
+      country.code === 'GB'
+        ? 'Stolen / outstanding finance / write-off status was not checked — those need a paid provider (e.g. an HPI-style check).'
+        : `Stolen / finance / write-off / ownership data for ${country.name} was not checked — that typically needs a paid national provider.`,
+    );
 
     const pass = checks.filter((c) => c.status === 'pass').length;
     const warn = checks.filter((c) => c.status === 'warn').length;
@@ -199,6 +219,7 @@ export class PlateChecker {
       formatted,
       valid: classification.valid,
       format: classification.format,
+      country: { code: country.code, name: country.name },
       age,
       region,
       vehicle,
@@ -206,7 +227,7 @@ export class PlateChecker {
       checks,
       summary: {
         status,
-        headline: this.headline(status, classification.valid, vehicle, liveSkipped),
+        headline: this.headline(status, classification.valid, vehicle, liveSkipped, country),
         pass,
         warn,
         fail,
@@ -223,13 +244,14 @@ export class PlateChecker {
     valid: boolean,
     vehicle: VehicleRecord | null,
     liveSkipped: boolean,
+    country: CountryDefinition,
   ): string {
-    if (!valid) return 'Not a valid UK registration mark';
+    if (!valid) return `Not a valid ${country.name} registration mark`;
     const desc = vehicle?.make
       ? `${[vehicle.colour, vehicle.make].filter(Boolean).join(' ')}${
           vehicle.yearOfManufacture ? ` (${vehicle.yearOfManufacture})` : ''
         }`
-      : 'Valid UK registration';
+      : `Valid ${country.name} registration`;
     if (status === 'ok') {
       return liveSkipped
         ? `${desc} — offline checks passed (live vehicle data not run)`
@@ -287,7 +309,6 @@ export class PlateChecker {
       data: { ...v },
     });
 
-    // Tax
     const taxed = v.taxStatus?.toLowerCase();
     checks.push({
       id: 'tax',
@@ -298,7 +319,6 @@ export class PlateChecker {
         : 'Tax status not reported',
     });
 
-    // MOT status (from VES — coarse; MOT history API is more detailed)
     const motStatus = v.motStatus?.toLowerCase();
     const motDays = daysUntil(v.motExpiryDate, reference);
     checks.push({
@@ -319,7 +339,6 @@ export class PlateChecker {
         : 'MOT status not reported',
     });
 
-    // Export marker
     if (v.markedForExport) {
       checks.push({
         id: 'export',
@@ -329,7 +348,6 @@ export class PlateChecker {
       });
     }
 
-    // Year vs plate-age consistency
     if (age && typeof v.yearOfManufacture === 'number') {
       const within = Math.abs(v.yearOfManufacture - age.approxYear) <= 1;
       checks.push({
@@ -354,7 +372,6 @@ export class PlateChecker {
     const providerName = this.motProvider?.name ?? 'DVSA MOT History API';
     const result = await this.motProvider!.lookup(normalized);
     if (!result.ok || !result.data) {
-      // `unconfigured` never reaches here — check() guards the call site.
       const detailMap: Record<string, string> = {
         not_found: 'No MOT history found for this registration (may be new or exempt)',
         rate_limited: `${providerName} rate limit hit`,

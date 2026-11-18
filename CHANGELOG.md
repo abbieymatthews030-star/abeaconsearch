@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Worldwide plate checker:** choose a country (ISO alpha-2) in the UI, API
+  (`country=` / `GET /api/plate/countries`), CLI (`--country`), MCP tools, and
+  search box (`plate FR AB-123-CD`). Offline format (and age/region where
+  encoded) for dozens of jurisdictions; live DVLA/DVSA lookups remain UK-only.
+
 ### Changed
 
 - **Home UI polish:** empty Search tab is a single brand-first composition

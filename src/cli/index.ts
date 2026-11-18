@@ -196,19 +196,27 @@ program
 
 program
   .command('plate <registration>')
-  .description('Run automatic checks on a UK number plate')
-  .option('--no-vehicle', 'skip the DVLA Vehicle Enquiry Service lookup')
-  .option('--no-mot', 'skip the DVSA MOT history lookup')
+  .description('Run automatic checks on a number plate (any supported country)')
+  .option('-c, --country <code>', 'ISO country code (default: GB)', 'GB')
+  .option('--no-vehicle', 'skip live vehicle lookup when available for the country')
+  .option('--no-mot', 'skip inspection/MOT history lookup when available')
   .option('--index', 'also store the result in the search index', false)
   .option('--json', 'output raw JSON', false)
   .action(
     async (
       registration: string,
-      opts: { vehicle?: boolean; mot?: boolean; index?: boolean; json?: boolean },
+      opts: {
+        country?: string;
+        vehicle?: boolean;
+        mot?: boolean;
+        index?: boolean;
+        json?: boolean;
+      },
     ) => {
       const config = loadConfig();
       const checker = createPlateChecker(config);
       const check = await checker.check(registration, {
+        country: opts.country,
         includeVehicleData: opts.vehicle !== false,
         includeMotHistory: opts.mot !== false,
       });
@@ -231,9 +239,11 @@ program
         info: 'ℹ',
         skipped: '·',
       };
-      process.stdout.write(`\n  ${check.formatted}  —  ${check.summary.headline}\n`);
       process.stdout.write(
-        `  format: ${check.format}   valid: ${check.valid ? 'yes' : 'no'}   ` +
+        `\n  ${check.formatted}  [${check.country.code}]  —  ${check.summary.headline}\n`,
+      );
+      process.stdout.write(
+        `  country: ${check.country.name}   format: ${check.format}   valid: ${check.valid ? 'yes' : 'no'}   ` +
           `${check.summary.pass} passed / ${check.summary.warn} warnings / ${check.summary.fail} failed\n\n`,
       );
       for (const item of check.checks) {
