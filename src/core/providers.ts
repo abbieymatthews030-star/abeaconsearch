@@ -281,9 +281,7 @@ export async function testProvider(id: string, deps: ProvidersDeps): Promise<Pro
         return probe.ok
           ? finish(
               'connected',
-              probe.exitIp
-                ? `Tor circuit up (exit ${probe.exitIp})`
-                : 'Tor circuit up via SOCKS',
+              probe.exitIp ? `Tor circuit up (exit ${probe.exitIp})` : 'Tor circuit up via SOCKS',
             )
           : finish('error', probe.error);
       }

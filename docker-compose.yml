@@ -14,6 +14,8 @@ services:
       BEACON_CRAWL_ALLOW_PRIVATE: 'false'
       BEACON_TOR_ENABLED: 'true'
       BEACON_TOR_SOCKS: socks5h://tor:9050
+      BEACON_SITE_NAME: ${BEACON_SITE_NAME:-Beacon Search}
+      BEACON_SITE_URL: ${BEACON_SITE_URL:-}
     volumes:
       - beacon-data:/data
     expose:

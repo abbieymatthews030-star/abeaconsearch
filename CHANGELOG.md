@@ -8,6 +8,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Full website + custom domain packaging:** product site chrome (About /
+  Privacy, brand home, hero landing, SEO meta / robots / manifest),
+  `BEACON_SITE_URL` / `BEACON_SITE_NAME`, public Compose overlay
+  (`docker-compose.public.yml` + `deploy/Caddyfile.public`) that serves your
+  domain over HTTPS without basic auth while blocking admin write routes, and
+  [`docs/website.md`](docs/website.md) for DNS + deploy without a PaaS.
 - **Tor mode:** header Tor toggle (UI ~50% purple / 25% white / 25% black) that
   searches onion services via Ahmia + a curated Tor directory, and opens
   `.onion` links through Beacon’s SOCKS5h proxy (`GET /api/tor/browse`,

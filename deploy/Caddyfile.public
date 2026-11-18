@@ -1,0 +1,24 @@
+# Public website front door — HTTPS + HSTS, no basic auth.
+# Use with docker-compose.public.yml when Beacon Search is the public site
+# on your domain. Review write endpoints before going live (see docs/website.md).
+{$BEACON_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Soften abuse of destructive / mutating admin routes on a public host.
+	@admin_write {
+		method POST PUT PATCH DELETE
+		path /api/index/* /api/documents* /api/crawl /api/settings* /api/providers*
+	}
+	respond @admin_write 403
+
+	reverse_proxy beacon:7700
+}

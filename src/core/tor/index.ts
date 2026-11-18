@@ -6,7 +6,12 @@ export {
   type TorSearchHit,
   type TorSearchOptions,
 } from './search.js';
-export { probeTorSocks, torFetch, type TorFetchOptions, type TorFetchResult } from './socks-fetch.js';
+export {
+  probeTorSocks,
+  torFetch,
+  type TorFetchOptions,
+  type TorFetchResult,
+} from './socks-fetch.js';
 
 export interface TorStatus {
   enabled: boolean;

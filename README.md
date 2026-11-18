@@ -69,11 +69,22 @@ search service or API keys are needed for the basic setup.
    Visit `https://your-domain`. Update with `git pull && docker compose up -d --build` when you choose to install a new version. Back up the `beacon-data`
    Docker volume to preserve the index.
 
-This setup protects the whole UI and API with the same password. For public,
-unauthenticated search, remove the `basic_auth` block from `deploy/Caddyfile`
-only if that is intended, and review API write endpoints first. The open-source
-repository remains public; deploying it does not publish the source files from
-your website server.
+This setup protects the whole UI and API with the same password.
+
+### Public website on your own domain
+
+To publish Beacon as a full site without a login wall (custom domain + HTTPS,
+admin write routes blocked at Caddy):
+
+```sh
+cp deploy/.env.public.example .env
+# set BEACON_DOMAIN and BEACON_SITE_URL
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --build
+```
+
+Step-by-step DNS, registrar, and security notes: [`docs/website.md`](docs/website.md).
+The open-source repository remains public; deploying it does not publish the
+source files from your website server.
 
 For local development, use `npm run dev` or run the app behind your own trusted
 reverse proxy. Avoid publishing port 7700 directly on an internet-facing server.
@@ -252,19 +263,19 @@ Tools: `check_number_plate`, `validate_plate_format`, `decode_plate`,
 All configuration is via environment variables (or a `.env` file — auto-loaded).
 See [`.env.example`](.env.example) for the full list. Common ones:
 
-| Variable                 | Default             | Description                      |
-| ------------------------ | ------------------- | -------------------------------- |
-| `BEACON_PORT`            | `7700`              | HTTP port (`PORT` also honoured) |
-| `BEACON_HOST`            | `0.0.0.0`           | Bind address                     |
-| `BEACON_DATA_DIR`        | `data`              | Where the index file is stored   |
-| `BEACON_INDEX_FILE`      | `<data>/index.json` | Explicit index path              |
-| `BEACON_WEB_DIR`         | `web/dist`          | Built web UI directory           |
-| `BEACON_CORS_ORIGIN`     | _(all)_             | Comma-separated allowed origins  |
-| `BEACON_LOG_LEVEL`       | `info`              | `trace`…`error`, or `silent`     |
-| `BEACON_CRAWL_MAX_PAGES` | `50`                | Default crawl page budget        |
-| `BEACON_TOR_ENABLED`     | `true`              | Tor-mode search + onion browse   |
-| `BEACON_TOR_SOCKS`       | `socks5h://127.0.0.1:9050` | Tor SOCKS5h endpoint      |
-| `BEACON_TOR_TIMEOUT_MS`  | `45000`             | Tor fetch timeout                |
+| Variable                 | Default                    | Description                      |
+| ------------------------ | -------------------------- | -------------------------------- |
+| `BEACON_PORT`            | `7700`                     | HTTP port (`PORT` also honoured) |
+| `BEACON_HOST`            | `0.0.0.0`                  | Bind address                     |
+| `BEACON_DATA_DIR`        | `data`                     | Where the index file is stored   |
+| `BEACON_INDEX_FILE`      | `<data>/index.json`        | Explicit index path              |
+| `BEACON_WEB_DIR`         | `web/dist`                 | Built web UI directory           |
+| `BEACON_CORS_ORIGIN`     | _(all)_                    | Comma-separated allowed origins  |
+| `BEACON_LOG_LEVEL`       | `info`                     | `trace`…`error`, or `silent`     |
+| `BEACON_CRAWL_MAX_PAGES` | `50`                       | Default crawl page budget        |
+| `BEACON_TOR_ENABLED`     | `true`                     | Tor-mode search + onion browse   |
+| `BEACON_TOR_SOCKS`       | `socks5h://127.0.0.1:9050` | Tor SOCKS5h endpoint             |
+| `BEACON_TOR_TIMEOUT_MS`  | `45000`                    | Tor fetch timeout                |
 
 ---
 
