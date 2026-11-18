@@ -1864,6 +1864,9 @@ function AnswerCard({
           {data?.denied ? 'QUERY NOT ANSWERED' : 'SOURCE-BACKED SUMMARY'}
         </span>
         {data && !data.denied && <ConfidenceBadge confidence={data.confidence} />}
+        {data?.denied && data.denyCategory && (
+          <span className="badge badge--muted">{data.denyCategory.replaceAll('_', ' ')}</span>
+        )}
         {data?.cached && <span className="badge badge--muted">cached</span>}
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />

@@ -63,6 +63,8 @@ export const ANSWER_FIELDS = [
   'generatedAt',
   'tookMs',
   'cached',
+  'denied',
+  'denyCategory',
 ] as const;
 
 type _Envelope = Expect<SameKeys<(typeof ENVELOPE_FIELDS)[number], keyof SearchEnvelope>>;
