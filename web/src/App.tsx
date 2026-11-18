@@ -289,12 +289,21 @@ function tabFromHash(hash: string): Tab {
   return TAB_IDS.includes(id) ? id : 'search';
 }
 
+function initialQueryFromUrl(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return new URLSearchParams(window.location.search).get('q')?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>(() =>
     typeof window !== 'undefined' ? tabFromHash(window.location.hash) : 'search',
   );
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => initialQueryFromUrl());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const clientSettings = useClientSettings();
 
@@ -357,7 +366,10 @@ export function App(): JSX.Element {
     saveHistory([]);
   }, []);
 
-  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+  const [pendingQuery, setPendingQuery] = useState<string | null>(() => {
+    const q = initialQueryFromUrl();
+    return q || null;
+  });
 
   const runFromHistory = (query: string) => {
     setInput(query);
