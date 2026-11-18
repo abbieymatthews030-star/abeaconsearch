@@ -13,3 +13,5 @@ data/
 .vscode/
 .codex/
 *.tmp
+
+.vercel
