@@ -290,7 +290,9 @@ async function searchAhmia(
   if (clearnet.hits.length > 0) {
     return {
       hits: clearnet.hits,
-      error: overTor.error ? `onion unavailable (${overTor.error}); used clearnet index` : undefined,
+      error: overTor.error
+        ? `onion unavailable (${overTor.error}); used clearnet index`
+        : undefined,
     };
   }
   return {

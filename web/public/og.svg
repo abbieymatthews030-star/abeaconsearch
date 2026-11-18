@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Beacon Search">
+  <rect width="1200" height="630" fill="#0b0b0c"/>
+  <g fill="#fbfbfa" transform="translate(520 215)">
+    <circle cx="80" cy="80" r="8"/>
+    <g stroke="#fbfbfa" stroke-width="4" stroke-linecap="round" fill="none">
+      <line x1="80" y1="18" x2="80" y2="42"/>
+      <line x1="80" y1="118" x2="80" y2="142"/>
+      <line x1="18" y1="80" x2="42" y2="80"/>
+      <line x1="118" y1="80" x2="142" y2="80"/>
+      <line x1="34" y1="34" x2="50" y2="50"/>
+      <line x1="110" y1="110" x2="126" y2="126"/>
+      <line x1="126" y1="34" x2="110" y2="50"/>
+      <line x1="50" y1="110" x2="34" y2="126"/>
+    </g>
+  </g>
+  <text x="600" y="430" fill="#fbfbfa" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="42" letter-spacing="14" text-anchor="middle">BEACON SEARCH</text>
+  <text x="600" y="480" fill="#9a9a97" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" letter-spacing="6" text-anchor="middle">SEARCH ON YOUR DOMAIN</text>
+</svg>

@@ -44,12 +44,12 @@ it is explicit about where every statement comes from and how far to trust it.
 
 Assigned from the source URL (`src/core/answer/trust.ts`):
 
-| Tier          | What it means                                                                                                                                  |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `official`    | `.gov` / `.gov.uk` / `.mil` / `.int` / `.edu` / `.ac.uk` / `nhs.uk` / EU / UN / WHO / …, or a domain listed in `BEACON_ANSWER_TRUSTED_DOMAINS` |
+| Tier          | What it means                                                                                                                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `official`    | `.gov` / `.gov.uk` / `.mil` / `.int` / `.edu` / `.ac.uk` / `nhs.uk` / EU / UN / WHO / …, or a domain listed in `BEACON_ANSWER_TRUSTED_DOMAINS`                                                                        |
 | `established` | curated encyclopedias, wire services, standards bodies, peer-reviewed / open-scholarship publishers (Wikipedia, Wikidata, Reuters, Nature, arXiv, Crossref/DOI, OpenAlex, Europe PMC, Internet Archive, W3C, IETF, …) |
-| `community`   | any other page that was fetched successfully or is in the index with a URL                                                                     |
-| `unverified`  | no URL, the page could not be fetched, or an LLM-only statement                                                                                |
+| `community`   | any other page that was fetched successfully or is in the index with a URL                                                                                                                                            |
+| `unverified`  | no URL, the page could not be fetched, or an LLM-only statement                                                                                                                                                       |
 
 ## Confidence
 

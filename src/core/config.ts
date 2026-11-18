@@ -17,11 +17,23 @@ export interface Config {
   crawlDelayMs: number;
   crawlAllowPrivateHosts: boolean;
   maxBodyBytes: number;
+  /** Public website identity (custom domain, product name). */
+  site: SiteConfig;
   plate: PlateConfig;
   answer: AnswerConfig;
   lookups: LookupsConfig;
   rateLimit: RateLimitConfig;
   tor: TorConfig;
+}
+
+export interface SiteConfig {
+  /** Display name shown in the UI and meta tags. */
+  name: string;
+  /**
+   * Canonical public origin, e.g. `https://search.example.com`.
+   * Empty when unset — the UI falls back to the current browser origin.
+   */
+  url: string;
 }
 
 export interface TorConfig {
@@ -140,8 +152,9 @@ function readOptional(name: string): string | undefined {
 }
 
 export interface ConfigOverrides extends Partial<
-  Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit' | 'tor'>
+  Omit<Config, 'site' | 'plate' | 'answer' | 'lookups' | 'rateLimit' | 'tor'>
 > {
+  site?: Partial<SiteConfig>;
   plate?: Partial<PlateConfig>;
   answer?: Partial<AnswerConfig>;
   lookups?: Partial<LookupsConfig>;
@@ -193,6 +206,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     crawlDelayMs: readInt('BEACON_CRAWL_DELAY_MS', 150),
     crawlAllowPrivateHosts: readBool('BEACON_CRAWL_ALLOW_PRIVATE', false),
     maxBodyBytes: readInt('BEACON_MAX_BODY_BYTES', 8 * 1024 * 1024),
+    site: {
+      name: readString('BEACON_SITE_NAME', 'Beacon Search'),
+      url: readString('BEACON_SITE_URL', ''),
+    },
     plate: {
       dvlaVesApiKey: readOptional('DVLA_VES_API_KEY'),
       dvlaVesBaseUrl: readOptional('DVLA_VES_BASE_URL'),
@@ -261,6 +278,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   return {
     ...base,
     ...overrides,
+    site: { ...base.site, ...overrides.site },
     plate: { ...base.plate, ...overrides.plate },
     answer: { ...base.answer, ...overrides.answer },
     lookups: { ...base.lookups, ...overrides.lookups },

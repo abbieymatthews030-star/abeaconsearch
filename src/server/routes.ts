@@ -83,6 +83,10 @@ export function healthPayload(
       enabled: ctx.config.tor.enabled,
       socksUrl: ctx.config.tor.socksUrl,
     },
+    site: {
+      name: ctx.config.site.name,
+      url: ctx.config.site.url,
+    },
   };
 }
 
