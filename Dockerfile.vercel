@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Vercel Container runtime image for Beacon Search.
+# Listens on $PORT (Vercel default 80). Index is ephemeral under /tmp.
+
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runtime
+ENV NODE_ENV=production \
+    BEACON_HOST=0.0.0.0 \
+    BEACON_DATA_DIR=/tmp/beacon-data \
+    BEACON_WEB_DIR=/app/web/dist \
+    BEACON_TOR_ENABLED=false \
+    BEACON_LOOKUPS_ENABLED=false \
+    BEACON_ANSWER_ALLOW_PRIVATE=false \
+    BEACON_CRAWL_ALLOW_PRIVATE=false
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/web/dist ./web/dist
+
+RUN addgroup -S beacon && adduser -S beacon -G beacon \
+  && mkdir -p /tmp/beacon-data \
+  && chown beacon:beacon /tmp/beacon-data
+USER beacon
+
+# Vercel sets PORT; do not hardcode BEACON_PORT so the platform port wins.
+EXPOSE 80
+CMD ["node", "dist/server/index.js"]

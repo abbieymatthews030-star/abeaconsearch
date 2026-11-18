@@ -22,9 +22,10 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
 
 ENV BEACON_HOST=0.0.0.0 \
-    BEACON_PORT=7700 \
     BEACON_DATA_DIR=/data \
     BEACON_WEB_DIR=/app/web/dist
+# Port defaults to 7700 via config (BEACON_PORT / PORT). Compose keeps 7700;
+# Vercel uses Dockerfile.vercel and the platform PORT.
 
 VOLUME ["/data"]
 EXPOSE 7700
