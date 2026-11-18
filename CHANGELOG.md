@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Settings customisation:** General prefs for colour theme (system / light /
+  dark), text size, content width, spacious density, reduce motion, and
+  toggles for snippets, result meta, tags, and search suggestions. Choices
+  stay in `localStorage` until changed or restored.
+
 ### Changed
 
 - **Home UI polish:** empty Search tab is a single brand-first composition
