@@ -60,20 +60,28 @@ function localeForRegion(region: unknown): string | undefined {
 function relativeTime(iso: string, region?: unknown): string {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return 'unknown';
-  const secs = Math.max(1, Math.round((Date.now() - then) / 1000));
-  const rtf = new Intl.RelativeTimeFormat(localeForRegion(region), { numeric: 'auto' });
+  const deltaMs = then - Date.now();
+  const absMs = Math.abs(deltaMs);
+  const locale = localeForRegion(region);
+  if (absMs > 86_400_000) {
+    return new Date(iso).toLocaleDateString(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+  const secs = Math.max(1, Math.round(absMs / 1000));
+  const sign = deltaMs > 0 ? 1 : -1;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
   const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 31_536_000],
-    ['month', 2_592_000],
-    ['week', 604_800],
     ['day', 86_400],
     ['hour', 3_600],
     ['minute', 60],
   ];
   for (const [unit, size] of units) {
-    if (secs >= size) return rtf.format(-Math.round(secs / size), unit);
+    if (secs >= size) return rtf.format(sign * Math.round(secs / size), unit);
   }
-  return rtf.format(-secs, 'second');
+  return rtf.format(sign * secs, 'second');
 }
 
 function formatCount(n: number, region?: unknown): string {
@@ -161,12 +169,26 @@ interface HistoryEntry {
   at: string;
 }
 
+const VALID_KINDS = new Set<QueryKind>(['domain', 'ip', 'calculation', 'plate', 'general']);
+
 function loadHistory(): HistoryEntry[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as HistoryEntry[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    const entries: HistoryEntry[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      if (typeof entry.query !== 'string' || typeof entry.at !== 'string') continue;
+      const kind =
+        typeof entry.kind === 'string' && VALID_KINDS.has(entry.kind as QueryKind)
+          ? (entry.kind as QueryKind)
+          : 'general';
+      entries.push({ query: entry.query, kind, at: entry.at });
+    }
+    return entries;
   } catch {
     return [];
   }
@@ -258,12 +280,32 @@ function countConnectedSources(health: HealthResponse | null): number {
   return n;
 }
 
+const TAB_IDS: Tab[] = ['search', 'history', 'settings', 'docs'];
+
+function tabFromHash(hash: string): Tab {
+  const id = hash.replace(/^#/, '') as Tab;
+  return TAB_IDS.includes(id) ? id : 'search';
+}
+
 export function App(): JSX.Element {
-  const [tab, setTab] = useState<Tab>('search');
+  const [tab, setTab] = useState<Tab>(() =>
+    typeof window !== 'undefined' ? tabFromHash(window.location.hash) : 'search',
+  );
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const clientSettings = useClientSettings();
+
+  const selectTab = useCallback((id: Tab) => {
+    setTab(id);
+    if (typeof window !== 'undefined') window.location.hash = id;
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   const refreshHealth = useCallback(() => {
     api
@@ -291,9 +333,14 @@ export function App(): JSX.Element {
       const q = query.trim();
       if (!q || !saveSearchHistory) return;
       setHistory((prev) => {
-        if (prev[0]?.query === q) return prev;
+        const at = new Date().toISOString();
+        if (prev[0]?.query === q) {
+          const next = [{ ...prev[0], kind, at }, ...prev.slice(1)];
+          saveHistory(next);
+          return next;
+        }
         const next = pruneHistory(
-          [{ query: q, kind, at: new Date().toISOString() }, ...prev.filter((e) => e.query !== q)],
+          [{ query: q, kind, at }, ...prev.filter((e) => e.query !== q)],
           retentionDays,
         );
         saveHistory(next);
@@ -308,9 +355,13 @@ export function App(): JSX.Element {
     saveHistory([]);
   }, []);
 
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+
   const runFromHistory = (query: string) => {
     setInput(query);
+    setPendingQuery(query);
     setTab('search');
+    if (typeof window !== 'undefined') window.location.hash = 'search';
   };
 
   const connectedSources = countConnectedSources(health);
@@ -324,8 +375,8 @@ export function App(): JSX.Element {
       <header className="app__header">
         <div className="brand">
           <Beacon size={40} />
-          <h1>ABEACON</h1>
-          <p>multi-source search</p>
+          <h1>Beacon Search</h1>
+          <p>self-hostable search</p>
         </div>
         <nav className="tabs" aria-label="Sections">
           {(
@@ -340,7 +391,8 @@ export function App(): JSX.Element {
               key={id}
               type="button"
               className={tab === id ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
-              onClick={() => setTab(id)}
+              onClick={() => selectTab(id)}
+              aria-current={tab === id ? 'page' : undefined}
             >
               {label}
             </button>
@@ -356,6 +408,8 @@ export function App(): JSX.Element {
             onCommit={recordHistory}
             health={health}
             clientSettings={clientSettings}
+            pendingQuery={pendingQuery}
+            onPendingConsumed={() => setPendingQuery(null)}
           />
         )}
         {tab === 'history' && (
@@ -407,12 +461,16 @@ function SearchView({
   onCommit,
   health,
   clientSettings,
+  pendingQuery,
+  onPendingConsumed,
 }: {
   input: string;
   onInputChange: (value: string) => void;
   onCommit: (query: string, kind: QueryKind) => void;
   health: HealthResponse | null;
   clientSettings: ClientSettingsApi;
+  pendingQuery: string | null;
+  onPendingConsumed: () => void;
 }): JSX.Element {
   const resultsPerPage = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
   const openInNewTab = clientSettings.values.openInNewTab !== false;
@@ -460,6 +518,15 @@ function SearchView({
   const [sourceNote, setSourceNote] = useState<string | null>(null);
   const [addingSource, setAddingSource] = useState(false);
   const answerAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => () => answerAbort.current?.abort(), []);
+
+  useEffect(() => {
+    if (pendingQuery == null) return;
+    if (pendingQuery !== input) return;
+    setSubmittedQuery(pendingQuery);
+    onPendingConsumed();
+  }, [pendingQuery, input, onPendingConsumed]);
 
   const runAnswer = useCallback((q: string, fresh: boolean, urls?: string[]) => {
     answerAbort.current?.abort();
@@ -532,6 +599,12 @@ function SearchView({
 
   useEffect(() => {
     abortRef.current?.abort();
+    if (!query.trim()) {
+      setLoading(false);
+      setResult(null);
+      setError(null);
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
@@ -565,6 +638,7 @@ function SearchView({
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
+        setResult(null);
         setError(err instanceof Error ? err.message : 'Search failed');
       })
       .finally(() => {
@@ -586,6 +660,13 @@ function SearchView({
     webMode,
     retryNonce,
   ]);
+
+  const pageScrollRef = useRef(page);
+  useEffect(() => {
+    if (pageScrollRef.current === page) return;
+    pageScrollRef.current = page;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [page]);
 
   useEffect(() => {
     const q = historyQuery.trim();
@@ -670,7 +751,7 @@ function SearchView({
   const showEmpty = Boolean(
     result && query.trim() && hits.length === 0 && !loading && !result.primary,
   );
-  const showReady = Boolean(result && !query.trim() && hits.length === 0 && !loading);
+  const showReady = Boolean(!query.trim() && !loading);
 
   const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -758,6 +839,7 @@ function SearchView({
           aria-label="Search query"
           aria-autocomplete="list"
           role="combobox"
+          aria-haspopup="listbox"
           aria-expanded={suggestOpen && suggestions.length > 0}
           aria-controls="search-suggest-list"
           aria-activedescendant={
@@ -814,7 +896,9 @@ function SearchView({
       )}
 
       {answerError && answerRequested && (
-        <p className="notice">Couldn’t write a summary. Results are listed separately.</p>
+        <p className="notice notice--error">
+          Couldn’t write a summary. {answerError.length > 160 ? `${answerError.slice(0, 160)}…` : answerError}
+        </p>
       )}
 
       {answerRequested && answerHasProse && (
@@ -848,6 +932,8 @@ function SearchView({
               type="button"
               className="search__filters-toggle"
               onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
             >
               filters {filtersOpen ? '▴' : '▾'}
             </button>
@@ -882,7 +968,7 @@ function SearchView({
                   className="chip chip--active"
                   onClick={() => toggleTag(tag)}
                 >
-                  {tag} ✕
+                  {tag}
                 </button>
               ))}
             </div>
@@ -897,7 +983,8 @@ function SearchView({
                   className={activeTags.includes(tag) ? 'chip chip--active' : 'chip'}
                   onClick={() => toggleTag(tag)}
                 >
-                  {tag} <span className="chip__count">{count}</span>
+                  {tag}{' '}
+                  <span className="chip__count">{formatCount(count, region)}</span>
                 </button>
               ))}
             </div>
@@ -912,7 +999,8 @@ function SearchView({
                   className={activeSource === source ? 'chip chip--active' : 'chip'}
                   onClick={() => setActiveSource((prev) => (prev === source ? undefined : source))}
                 >
-                  {source} <span className="chip__count">{count}</span>
+                  {source}{' '}
+                  <span className="chip__count">{formatCount(count, region)}</span>
                 </button>
               ))}
             </div>
@@ -920,7 +1008,14 @@ function SearchView({
         </div>
       )}
 
-      <ol className="results">
+      <ol
+        className={
+          loading && result && result.query !== query.trim()
+            ? 'results results--stale'
+            : 'results'
+        }
+        aria-busy={loading}
+      >
         {hits.map((hit) => (
           <li key={hit.id} className="result" data-search-score={hit.score}>
             <h3 className="result__title">
@@ -963,9 +1058,11 @@ function SearchView({
               <>
                 <strong>No good matches for “{query.trim()}”.</strong>
                 <span>
-                  {result.outcome === 'unconfigured'
-                    ? 'No live search sources are connected. Add pages to your index or enable a web source.'
-                    : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
+                  {result.outcome === 'error'
+                    ? 'Search sources failed. Check Settings → Sources or try again shortly.'
+                    : result.outcome === 'unconfigured'
+                      ? 'No live search sources are connected. Add pages to your index or enable a web source.'
+                      : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
                 </span>
               </>
             )}
@@ -1022,7 +1119,7 @@ function SearchView({
       {showReady && (
         <div className="empty">
           <Beacon size={150} />
-          <strong>ready</strong>
+          <strong>Ready</strong>
           <span>Type to search — a name, a domain, a question, or plain text.</span>
         </div>
       )}
@@ -1094,6 +1191,16 @@ function PrimaryCard({ primary }: { primary: PrimaryResult }): JSX.Element {
   }
 }
 
+function formatLookupDate(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso.slice(0, 10);
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 function DomainCard({ primary }: { primary: DomainPrimary }): JSX.Element {
   const data = primary.data;
   return (
@@ -1107,6 +1214,9 @@ function DomainCard({ primary }: { primary: DomainPrimary }): JSX.Element {
           Domain lookups are disabled. Enable them in Settings → Domain / IP lookups (the{' '}
           <code>BEACON_LOOKUPS_ENABLED</code> env var only sets the boot default).
         </p>
+      )}
+      {primary.enabled && !data && (
+        <p className="notice">No registration data returned for this domain.</p>
       )}
       {data && (
         <>
@@ -1144,13 +1254,13 @@ function DomainCard({ primary }: { primary: DomainPrimary }): JSX.Element {
             {data.createdDate && (
               <div>
                 <dt>Registered</dt>
-                <dd>{data.createdDate.slice(0, 10)}</dd>
+                <dd>{formatLookupDate(data.createdDate)}</dd>
               </div>
             )}
             {data.expiresDate && (
               <div>
                 <dt>Expires</dt>
-                <dd>{data.expiresDate.slice(0, 10)}</dd>
+                <dd>{formatLookupDate(data.expiresDate)}</dd>
               </div>
             )}
           </dl>
@@ -1181,6 +1291,9 @@ function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
           IP lookups are disabled. Enable them in Settings → Domain / IP lookups (the{' '}
           <code>BEACON_LOOKUPS_ENABLED</code> env var only sets the boot default).
         </p>
+      )}
+      {primary.enabled && !data && (
+        <p className="notice">No registration data returned for this address.</p>
       )}
       {data && (
         <>
@@ -1265,8 +1378,14 @@ function HistoryView({
       <div className="history__actions">
         <p className="notice">Recent queries, stored locally in this browser.</p>
         {entries.length > 0 && (
-          <button type="button" className="btn btn--danger" onClick={onClear}>
-            clear history
+          <button
+            type="button"
+            className="btn btn--danger"
+            onClick={() => {
+              if (window.confirm('Clear all saved search history in this browser?')) onClear();
+            }}
+          >
+            Clear history
           </button>
         )}
       </div>
@@ -1278,7 +1397,7 @@ function HistoryView({
               <button type="button" className="history__query" onClick={() => onPick(entry.query)}>
                 {entry.query}
               </button>
-              <span className="history__kind">{KIND_LABEL[entry.kind]}</span>
+              <span className="history__kind">{KIND_LABEL[entry.kind] ?? entry.kind}</span>
               <span className="history__time">{relativeTime(entry.at, region)}</span>
             </li>
           ))}
@@ -1286,7 +1405,7 @@ function HistoryView({
       ) : (
         <div className="empty">
           <Beacon size={120} />
-          <strong>no history yet</strong>
+          <strong>No history yet</strong>
           <span>Queries you run will show up here.</span>
         </div>
       )}
@@ -1311,26 +1430,36 @@ function LibraryView({
   const [panel, setPanel] = useState<'add' | 'edit' | 'crawl' | 'import' | null>(null);
   const [editing, setEditing] = useState<BeaconDocument | null>(null);
   const [detail, setDetail] = useState<BeaconDocument | null>(null);
+  const docsAbort = useRef<AbortController | null>(null);
 
   const refresh = useCallback(() => {
+    docsAbort.current?.abort();
+    const controller = new AbortController();
+    docsAbort.current = controller;
     setLoading(true);
     api
-      .documents({ limit: pageSize, offset: page * pageSize })
+      .documents({ limit: pageSize, offset: page * pageSize }, controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setDocs(res.documents);
         setTotal(res.total);
         setError(null);
       })
-      .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load documents'),
-      )
-      .finally(() => setLoading(false));
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : 'Failed to load documents');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
   }, [page, pageSize]);
 
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    refresh();
+    return () => docsAbort.current?.abort();
+  }, [refresh]);
 
-  const handleAdded = () => {
-    setPanel(null);
+  const handleMutated = () => {
     setPage(0);
     refresh();
     onDone();
@@ -1341,8 +1470,7 @@ function LibraryView({
     api
       .deleteDocument(doc.id)
       .then(() => {
-        refresh();
-        onDone();
+        handleMutated();
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to remove'));
   };
@@ -1352,9 +1480,7 @@ function LibraryView({
     api
       .clearIndex()
       .then(() => {
-        setPage(0);
-        refresh();
-        onDone();
+        handleMutated();
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to clear'));
   };
@@ -1385,41 +1511,42 @@ function LibraryView({
           className={panel === 'add' ? 'btn btn--active' : 'btn'}
           onClick={() => setPanel((p) => (p === 'add' ? null : 'add'))}
         >
-          + add document
+          + Add document
         </button>
         <button
           type="button"
           className={panel === 'import' ? 'btn btn--active' : 'btn'}
           onClick={() => setPanel((p) => (p === 'import' ? null : 'import'))}
         >
-          ↑ import json
+          Import JSON
         </button>
         <button
           type="button"
           className={panel === 'crawl' ? 'btn btn--active' : 'btn'}
           onClick={() => setPanel((p) => (p === 'crawl' ? null : 'crawl'))}
         >
-          ⤓ crawl site
+          Crawl site
         </button>
         {total > 0 && (
           <button type="button" className="btn btn--danger" onClick={clearAll}>
-            clear index
+            Clear index
           </button>
         )}
       </div>
 
-      {panel === 'add' && <AddView onDone={handleAdded} />}
+      {panel === 'add' && <AddView onDone={handleMutated} />}
       {panel === 'edit' && editing && (
         <AddView
           initial={editing}
           onDone={() => {
             setEditing(null);
-            handleAdded();
+            setPanel(null);
+            handleMutated();
           }}
         />
       )}
-      {panel === 'import' && <ImportView onDone={handleAdded} />}
-      {panel === 'crawl' && <CrawlView onDone={handleAdded} />}
+      {panel === 'import' && <ImportView onDone={handleMutated} />}
+      {panel === 'crawl' && <CrawlView onDone={handleMutated} />}
       {detail && (
         <article className="library__detail">
           <div className="library__actions">
@@ -1491,7 +1618,7 @@ function LibraryView({
         !loading && (
           <div className="empty">
             <Beacon size={120} />
-            <strong>index empty</strong>
+            <strong>Index empty</strong>
             <span>Add a document or crawl a site to get started.</span>
           </div>
         )
@@ -1563,12 +1690,44 @@ function AnswerCard({
   region: unknown;
   onRefresh: () => void;
 }): JSX.Element {
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+
   const cite = (id: number) =>
     citationsVisible ? (
-      <a key={id} href={`#answer-src-${id}`} className="cite">
+      <a
+        key={id}
+        href={`#answer-src-${id}`}
+        className="cite"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById(`answer-src-${id}`)?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+          });
+        }}
+      >
         [{id}]
       </a>
     ) : null;
+
+  const copyAnswer = () => {
+    if (!data) return;
+    const text =
+      data.claims.length > 0
+        ? stripCitations(data.claims.map((c) => c.text).join(' '))
+        : stripCitations(data.answer);
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopyNote('Copied');
+        setTimeout(() => setCopyNote(null), 1500);
+      },
+      () => {
+        setCopyNote('Copy failed');
+        setTimeout(() => setCopyNote(null), 1500);
+      },
+    );
+  };
+
   return (
     <section
       className="answer"
@@ -1584,9 +1743,14 @@ function AnswerCard({
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />
         {data && (
-          <button type="button" className="answer__refresh" onClick={onRefresh}>
-            Refresh summary
-          </button>
+          <>
+            <button type="button" className="answer__refresh" onClick={copyAnswer}>
+              {copyNote ?? 'Copy'}
+            </button>
+            <button type="button" className="answer__refresh" onClick={onRefresh}>
+              Refresh summary
+            </button>
+          </>
         )}
       </div>
 
@@ -1793,9 +1957,18 @@ function AddView({
       </label>
       <label>
         Body
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} />
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={10}
+          required
+        />
       </label>
-      <button type="submit" className="btn" disabled={busy || title.trim() === ''}>
+      <button
+        type="submit"
+        className="btn"
+        disabled={busy || title.trim() === '' || body.trim() === ''}
+      >
         {busy ? 'Indexing…' : initial ? 'Save changes' : 'Add to index'}
       </button>
       {status && (
@@ -2259,7 +2432,6 @@ function PlateView({
           placeholder="AB12 CDE"
           aria-label="Registration mark"
           maxLength={16}
-          autoFocus
         />
         <button type="submit" className="btn" disabled={busy || input.trim() === ''}>
           {busy ? 'Checking…' : 'Run checks'}
@@ -2561,6 +2733,7 @@ function SourcesSection({
   pendingServer,
   serverErrors,
   onServerChange,
+  onReset,
 }: {
   providers: ProviderStatus[] | null;
   onTested: () => void;
@@ -2570,6 +2743,7 @@ function SourcesSection({
   pendingServer: Record<string, boolean | number | string>;
   serverErrors: Record<string, string>;
   onServerChange: (def: SettingDefinition, value: unknown) => void;
+  onReset?: () => void;
 }): JSX.Element {
   const [testing, setTesting] = useState<string | null>(null);
 
@@ -2588,7 +2762,14 @@ function SourcesSection({
 
   return (
     <section className="settings__section">
-      <h2>Sources</h2>
+      <div className="settings__section-head">
+        <h2>Sources</h2>
+        {onReset && (
+          <button type="button" className="settings__restore" onClick={onReset}>
+            Restore defaults
+          </button>
+        )}
+      </div>
       <p className="notice">
         Every source Beacon can actually use right now, derived live from its configuration —
         nothing here is hard-coded.
@@ -2659,6 +2840,7 @@ function PrivacySection({
   clientSettings,
   serverSettings,
   llmNames,
+  pendingServer,
   serverErrors,
   onServerChange,
   onReset,
@@ -2668,6 +2850,7 @@ function PrivacySection({
   clientSettings: ClientSettingsApi;
   serverSettings: SettingsEntry[];
   llmNames: readonly string[];
+  pendingServer: Record<string, boolean | number | string>;
   serverErrors: Record<string, string>;
   onServerChange: (def: SettingDefinition, value: unknown) => void;
   onReset: () => void;
@@ -2700,12 +2883,15 @@ function PrivacySection({
           }
           const entry = serverSettings.find((e) => e.id === def.id);
           if (!entry) return null;
+          const pendingVal = pendingServer[def.id];
+          const value = pendingVal !== undefined ? pendingVal : entry.value;
           return (
             <SettingField
               key={def.id}
               def={def}
-              value={entry.value}
+              value={value}
               error={serverErrors[def.id]}
+              pending={pendingVal !== undefined}
               onChange={(v) => onServerChange(def, v)}
             />
           );
@@ -2719,7 +2905,9 @@ function PrivacySection({
         <button
           type="button"
           className="btn btn--danger"
-          onClick={onClearHistory}
+          onClick={() => {
+            if (window.confirm('Clear all saved search history in this browser?')) onClearHistory();
+          }}
           disabled={historyCount === 0}
         >
           Clear history
@@ -2991,13 +3179,35 @@ function HealthPanel({
   onRefresh: () => void;
   onSeeDetails: () => void;
 }): JSX.Element {
+  const localIndexRow = ((): { label: string; status: ProviderStatus['status']; detail: string } => {
+    if (!diagnostics && !health) {
+      return { label: 'Local index', status: 'error', detail: 'Unreachable' };
+    }
+    const persistError = diagnostics?.lastPersistError ?? health?.lastPersistError;
+    if (persistError) {
+      return {
+        label: 'Local index',
+        status: 'error',
+        detail: persistError.length > 80 ? `${persistError.slice(0, 80)}…` : persistError,
+      };
+    }
+    const status = diagnostics?.status ?? health?.status;
+    if (status === 'degraded') {
+      return { label: 'Local index', status: 'available', detail: 'Degraded' };
+    }
+    if (health?.indexEmpty) {
+      return { label: 'Local index', status: 'available', detail: 'Empty' };
+    }
+    return { label: 'Local index', status: 'connected', detail: 'Ready' };
+  })();
+
   const rows: Array<{ label: string; status: ProviderStatus['status']; detail: string }> = [
     {
       label: 'Search API',
       status: diagnostics ? 'connected' : 'error',
       detail: diagnostics ? 'Healthy' : 'Unreachable',
     },
-    { label: 'Local index', status: 'connected', detail: 'Ready' },
+    localIndexRow,
   ];
 
   if (diagnostics) {
@@ -3082,6 +3292,8 @@ function SettingsView({
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [settingsQuery, setSettingsQuery] = useState('');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const refreshSettings = useCallback(() => {
     api
@@ -3144,6 +3356,7 @@ function SettingsView({
 
   const saveChanges = () => {
     setSaving(true);
+    setSaveError(null);
     const patch: Record<string, boolean | number | string> = {};
     for (const [id, raw] of Object.entries(pendingServer)) {
       const entry = serverSettings.find((item) => item.id === id);
@@ -3161,8 +3374,8 @@ function SettingsView({
         });
         onSettingsChanged();
       })
-      .catch(() => {
-        /* network-level failure — the pending edits stay so the user can retry */
+      .catch((err: unknown) => {
+        setSaveError(err instanceof Error ? err.message : 'Failed to save settings');
       })
       .finally(() => setSaving(false));
   };
@@ -3170,6 +3383,7 @@ function SettingsView({
   const discardChanges = () => {
     setPendingServer({});
     setServerErrors({});
+    setSaveError(null);
   };
 
   const llmNames = health?.answer.llm ?? [];
@@ -3178,6 +3392,8 @@ function SettingsView({
   const liveServerDefs = serverSettings.map((entry) => serverEntryToDefinition(entry, llmNames));
 
   const resetSection = (target: SettingSection) => {
+    if (!window.confirm(`Restore defaults for ${SECTION_LABEL[target]}?`)) return;
+    setResetError(null);
     const defs = [
       ...clientSettingsInSection(target),
       ...liveServerDefs.filter((def) => inSection(def, target)),
@@ -3202,8 +3418,8 @@ function SettingsView({
           });
           onSettingsChanged();
         })
-        .catch(() => {
-          /* leave things as they were — nothing was reset */
+        .catch((err: unknown) => {
+          setResetError(err instanceof Error ? err.message : 'Failed to restore defaults');
         });
     }
   };
@@ -3304,6 +3520,7 @@ function SettingsView({
               pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
+              onReset={() => resetSection('sources')}
             />
           )}
           {section === 'ai' && (
@@ -3324,6 +3541,7 @@ function SettingsView({
               clientSettings={clientSettings}
               serverSettings={serverSettings}
               llmNames={llmNames}
+              pendingServer={pendingServer}
               serverErrors={serverErrors}
               onServerChange={handleServerChange}
               onReset={() => resetSection('privacy')}
@@ -3347,6 +3565,12 @@ function SettingsView({
           )}
         </div>
       </div>
+
+      {(saveError || resetError) && (
+        <p className="notice notice--error" role="alert">
+          {saveError || resetError}
+        </p>
+      )}
 
       {pendingCount > 0 && (
         <div className="settings__unsaved" role="status">
