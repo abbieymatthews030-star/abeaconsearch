@@ -4,6 +4,12 @@ import { AnswerService, type EngineLike } from './answer-service.js';
 
 export { AnswerService, AnswerBusyError } from './answer-service.js';
 export type { AnswerServiceDeps, AnswerOptions } from './answer-service.js';
+export {
+  evaluateQueryContent,
+  deniedAnswerText,
+  looksLikeModelRefusal,
+} from './content-policy.js';
+export type { ContentDecision } from './content-policy.js';
 export type * from './types.js';
 
 export interface CreateAnswerServiceOptions {

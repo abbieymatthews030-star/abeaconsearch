@@ -68,6 +68,12 @@ export interface AnswerCandidate {
   summary: string;
 }
 
+/** Categories the answer layer will not cover (narrow deny list). */
+export type DeniedCategory =
+  | 'bestiality'
+  | 'sexual_violence_against_women'
+  | 'physical_violence_against_women';
+
 export interface AnswerResponse {
   query: string;
   /** The woven prose, with inline `[n]` citation markers. */
@@ -94,4 +100,11 @@ export interface AnswerResponse {
   tookMs: number;
   /** True when this response was served from the short-lived answer cache. */
   cached: boolean;
+  /**
+   * True only when the query matched the narrow deny list (bestiality, or
+   * sexual / physical violence against women). All other topics are answered.
+   */
+  denied?: boolean;
+  /** Which deny-list category matched, when {@link denied} is true. */
+  denyCategory?: DeniedCategory;
 }

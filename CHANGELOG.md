@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Always-answer policy:** `/api/answer` answers every topic from retrieved
+  sources or, when sources are thin/missing, from an LLM knowledge fallback.
+  Soft model refusals are retried. The only denials are bestiality and sexual
+  or physical violence against women (`denied: true`). The web UI now shows
+  knowledge-fallback and deny-list answers instead of hiding `confidence: none`
+  prose.
+
 ### Added
 
 - **Full website + custom domain packaging:** product site chrome (About /
