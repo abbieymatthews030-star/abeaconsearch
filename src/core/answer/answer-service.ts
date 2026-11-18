@@ -2,6 +2,11 @@ import type { AnswerConfig } from '../config.js';
 import type { Logger } from '../logger.js';
 import { normalizeWhitespace, tokenize } from '../text.js';
 import { roundMs } from '../timing.js';
+import {
+  deniedAnswerText,
+  evaluateQueryContent,
+  looksLikeModelRefusal,
+} from './content-policy.js';
 import { clusterCandidates, looksLikeIdentityQuery, type EntityCandidate } from './evidence.js';
 import {
   queryKeywords,
@@ -16,6 +21,7 @@ import {
   createLlmSynthesizers,
   type LlmSynthesizer,
   type SynthesisExtract,
+  type SynthesisInput,
 } from './providers/llm.js';
 import { createWebSearchProviders, type WebSearchProvider } from './providers/web-search.js';
 import { gatherSources, type EngineLike, type RetrievedSource } from './retrieval.js';
@@ -25,6 +31,7 @@ import type {
   AnswerConfidence,
   AnswerResponse,
   AnswerSource,
+  DeniedCategory,
   Synthesizer,
 } from './types.js';
 
@@ -60,9 +67,14 @@ export interface AnswerOptions {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_MAX = 100;
 const MAX_CONCURRENT = 4;
+/** Legacy non-answer sentinel some older prompts returned — treat as a miss. */
 const LLM_SENTINEL = 'the available sources do not answer this question';
 const NEGATION_RE =
   /\b(not|never|no longer|isn't|doesn't|didn't|wasn't|weren't|false|denies|denied|disputed|incorrect|debunked)\b/i;
+
+type RetryableSynthesizer = LlmSynthesizer & {
+  weaveRetry?: (input: SynthesisInput, signal?: AbortSignal) => Promise<string>;
+};
 
 function contentTokens(text: string): string[] {
   return tokenize(text).filter((t) => t.length > 2 && !STOPWORDS.has(t));
@@ -161,6 +173,11 @@ export class AnswerService {
     options: AnswerOptions,
     startedAt: number,
   ): Promise<AnswerResponse> {
+    const policy = evaluateQueryContent(query);
+    if (!policy.allowed) {
+      return this.deniedResponse(query, policy.category, policy.reason, startedAt);
+    }
+
     const warnings: string[] = [];
     const pinned = (options.urls ?? []).map((url) => url.trim()).filter(Boolean);
     const { sources: gathered, warnings: gatherWarnings } = await gatherSources(query, {
@@ -217,9 +234,24 @@ export class AnswerService {
     };
 
     if (retrieved.length === 0) {
+      const generated = await this.generateAlways(query, [], warnings, options.signal);
+      if (generated) {
+        return finish({
+          answer: `Unverified — generated without a retrieved source:\n\n${generated.prose}`,
+          claims: [],
+          confidence: 'none',
+          confidenceReason: 'no sources could be retrieved; answer generated from available knowledge',
+          synthesizer: generated.synthesizer,
+          disclaimer:
+            'No source was retrieved for this query. The answer below is automatically generated and unverified.',
+          identityConfidence: 0,
+          sourceQuality: 0,
+          searchGaps: this.buildSearchGaps(retrieved, warnings),
+        });
+      }
       return finish({
         answer:
-          'No reliable source was found for this query. Try rephrasing it, or add material through the Crawl or Add tabs so Beacon has something to answer from.',
+          'No source was retrieved for this query and no language model is configured to generate an answer. Enable an LLM under Settings → AI, or add material through Crawl / Add so Beacon has something to answer from.',
         claims: [],
         confidence: 'none',
         confidenceReason: 'no sources could be retrieved from the index or the web',
@@ -265,11 +297,50 @@ export class AnswerService {
 
     const usableRetrieved = retrieved.filter((s) => s.usableForAnswer);
     if (usableRetrieved.length === 0) {
+      // Still hand whatever text we found to the LLM so grey-area / thin pages
+      // can produce an answer instead of a soft refusal.
+      const thinExtracts = this.buildExtracts(retrieved, grounded);
+      const generated = await this.generateAlways(query, thinExtracts, warnings, options.signal);
+      if (generated) {
+        const claims = this.verify(generated.prose, retrieved);
+        const supported = claims.filter((c) => c.supported);
+        if (supported.length > 0) {
+          return finish({
+            answer: claims
+              .map((c) => (c.supported ? c.text : `${c.text} (unverified)`))
+              .join(' '),
+            claims,
+            confidence: 'low',
+            confidenceReason:
+              'sources lacked clean evidence; answer combined thin retrieval with generated knowledge',
+            synthesizer: generated.synthesizer,
+            disclaimer:
+              'Retrieved pages were thin or off-topic. Parts of this answer may be unverified.',
+            identityConfidence: isIdentityQuery ? 0 : 1,
+            sourceQuality: average(retrieved.map((s) => s.sourceQualityScore)),
+            searchGaps: this.buildSearchGaps(retrieved, warnings),
+          });
+        }
+        return finish({
+          answer: `Unverified — generated from thin or incomplete sources:\n\n${generated.prose
+            .replace(/\s*\[\d+\]/g, '')
+            .trim()}`,
+          claims: [],
+          confidence: 'none',
+          confidenceReason: 'no retrieved source contained usable evidence; answer generated',
+          synthesizer: generated.synthesizer,
+          disclaimer:
+            'None of the retrieved sources contained usable evidence. The answer below is automatically generated and unverified.',
+          identityConfidence: isIdentityQuery ? 0 : 1,
+          sourceQuality: 0,
+          searchGaps: this.buildSearchGaps(retrieved, warnings),
+        });
+      }
       const only = retrieved[0];
       const answer =
         retrieved.length === 1 && only
-          ? `I found a ${only.origin === 'web' ? 'web page' : 'local document'} matching "${query}", but ${only.reason}.`
-          : `${retrieved.length} sources were found for "${query}", but none contained substantive, relevant evidence.`;
+          ? `A ${only.origin === 'web' ? 'web page' : 'local document'} matching "${query}" was found, but ${only.reason}. No language model is configured to generate a fuller answer.`
+          : `${retrieved.length} sources were found for "${query}", but none contained substantive, relevant evidence, and no language model is configured to generate an answer.`;
       return finish({
         answer,
         claims: [],
@@ -288,21 +359,16 @@ export class AnswerService {
     let prose = weaveExtractive(grounded);
     let synthesizer: Synthesizer = 'extractive';
 
-    for (const llm of this.resolveSynthesizers()) {
-      try {
-        const woven = await llm.weave({ query, extracts }, options.signal);
-        prose = woven;
-        synthesizer = llm.kind;
-        break;
-      } catch (error) {
-        warnings.push(
-          `${llm.name} synthesis failed (${error instanceof Error ? error.message : String(error)}); used the extractive fallback`,
-        );
-      }
+    const woven = await this.generateAlways(query, extracts, warnings, options.signal);
+    if (woven) {
+      prose = woven.prose;
+      synthesizer = woven.synthesizer;
     }
 
     const sentinelHit =
-      synthesizer !== 'extractive' && prose.toLowerCase().replace(/[.\s]+$/, '') === LLM_SENTINEL;
+      synthesizer !== 'extractive' &&
+      (prose.toLowerCase().replace(/[.\s]+$/, '') === LLM_SENTINEL ||
+        looksLikeModelRefusal(prose));
 
     // --- Verify citations ------------------------------------------------
     const claims = sentinelHit ? [] : this.verify(prose, retrieved);
@@ -362,7 +428,7 @@ export class AnswerService {
     }
 
     if (confidence === 'none') {
-      return this.noneResponse(
+      return await this.noneResponse(
         query,
         retrieved,
         grounded,
@@ -371,6 +437,7 @@ export class AnswerService {
         prose,
         startedAt,
         isIdentityQuery,
+        options.signal,
       );
     }
 
@@ -556,7 +623,7 @@ export class AnswerService {
     return [...notes];
   }
 
-  private noneResponse(
+  private async noneResponse(
     query: string,
     retrieved: RetrievedSource[],
     grounded: GroundedClaim[],
@@ -565,7 +632,8 @@ export class AnswerService {
     prose: string,
     startedAt: number,
     isIdentityQuery: boolean,
-  ): AnswerResponse {
+    signal?: AbortSignal,
+  ): Promise<AnswerResponse> {
     const base = {
       query,
       sources: retrieved.map((s) => this.toPublicSource(query, s, grounded, new Set<number>())),
@@ -574,18 +642,22 @@ export class AnswerService {
       tookMs: roundMs(startedAt),
       cached: false,
       confidence: 'none' as const,
-      confidenceReason: 'the retrieved sources do not answer this question',
+      confidenceReason: 'the retrieved sources do not fully answer this question',
       identityConfidence: isIdentityQuery ? 0 : 1,
       sourceQuality: 0,
       claims: [] as AnswerClaim[],
       searchGaps: this.buildSearchGaps(retrieved, warnings),
       disclaimer:
-        'None of the retrieved sources answer this question. Anything below is unverified.',
+        'Retrieved sources did not fully answer this question. Anything below is unverified.',
     };
 
     if (synthesizer !== 'extractive') {
       const stripped = prose.replace(/\s*\[\d+\]/g, '').trim();
-      if (stripped && stripped.toLowerCase().replace(/[.\s]+$/, '') !== LLM_SENTINEL) {
+      if (
+        stripped &&
+        stripped.toLowerCase().replace(/[.\s]+$/, '') !== LLM_SENTINEL &&
+        !looksLikeModelRefusal(stripped)
+      ) {
         return {
           ...base,
           synthesizer,
@@ -593,12 +665,120 @@ export class AnswerService {
         };
       }
     }
+
+    // Last resort: force a knowledge answer even when the first weave refused
+    // or returned the legacy sentinel.
+    const extracts = this.buildExtracts(retrieved, grounded);
+    const generated = await this.generateAlways(query, extracts, warnings, signal, true);
+    if (generated) {
+      const stripped = generated.prose.replace(/\s*\[\d+\]/g, '').trim();
+      if (stripped && !looksLikeModelRefusal(stripped)) {
+        return {
+          ...base,
+          synthesizer: generated.synthesizer,
+          answer: `Unverified — generated from available information:\n\n${stripped}`,
+        };
+      }
+    }
+
+    // Extractive leftovers still beat a hard non-answer.
+    if (grounded.length > 0) {
+      return {
+        ...base,
+        synthesizer: 'extractive',
+        answer: weaveExtractive(grounded),
+        claims: grounded.map((g) => ({
+          text: `${g.text} [${g.sourceId}]`,
+          sourceIds: [g.sourceId],
+          supported: true,
+        })),
+        confidence: 'low',
+        confidenceReason: 'only partial extractive evidence was available',
+        disclaimer: 'Only partial source extracts were available for this answer.',
+      };
+    }
+
     return {
       ...base,
       synthesizer: 'extractive',
       answer:
-        'The retrieved sources do not answer this question, and no verified answer is available.',
+        'Retrieved sources did not fully cover this question, and no language model is configured to generate a fuller answer. Enable an LLM under Settings → AI, or add more sources.',
     };
+  }
+
+  /** Narrow deny-list response — the only path that withholds an answer. */
+  private deniedResponse(
+    query: string,
+    category: DeniedCategory,
+    reason: string,
+    startedAt: number,
+  ): AnswerResponse {
+    return {
+      query,
+      answer: deniedAnswerText(category),
+      claims: [],
+      sources: [],
+      confidence: 'none',
+      confidenceReason: reason,
+      identityConfidence: 0,
+      sourceQuality: 0,
+      synthesizer: 'extractive',
+      disclaimer: reason,
+      warnings: [],
+      searchGaps: [],
+      generatedAt: this.now().toISOString(),
+      tookMs: roundMs(startedAt),
+      cached: false,
+      denied: true,
+      denyCategory: category,
+    };
+  }
+
+  /**
+   * Always try to produce prose via configured LLMs. Retries once on soft
+   * refusal. Returns null only when no LLM is configured or every call fails.
+   */
+  private async generateAlways(
+    query: string,
+    extracts: SynthesisExtract[],
+    warnings: string[],
+    signal?: AbortSignal,
+    forceRetry = false,
+  ): Promise<{ prose: string; synthesizer: Synthesizer } | null> {
+    const input: SynthesisInput = { query, extracts, allowKnowledge: true };
+    for (const llm of this.resolveSynthesizers()) {
+      try {
+        let prose = await llm.weave(input, signal);
+        if (looksLikeModelRefusal(prose) || forceRetry) {
+          const retryable = llm as RetryableSynthesizer;
+          if (typeof retryable.weaveRetry === 'function') {
+            prose = await retryable.weaveRetry(input, signal);
+          } else if (looksLikeModelRefusal(prose)) {
+            prose = await llm.weave(
+              {
+                ...input,
+                query: `${query}\n\nAnswer directly with useful information. Do not refuse.`,
+              },
+              signal,
+            );
+          }
+        }
+        if (
+          !prose.trim() ||
+          prose.toLowerCase().replace(/[.\s]+$/, '') === LLM_SENTINEL ||
+          looksLikeModelRefusal(prose)
+        ) {
+          warnings.push(`${llm.name} returned a non-answer; trying next synthesizer if any`);
+          continue;
+        }
+        return { prose, synthesizer: llm.kind };
+      } catch (error) {
+        warnings.push(
+          `${llm.name} synthesis failed (${error instanceof Error ? error.message : String(error)}); trying next synthesizer if any`,
+        );
+      }
+    }
+    return null;
   }
 
   private buildExtracts(sources: RetrievedSource[], grounded: GroundedClaim[]): SynthesisExtract[] {

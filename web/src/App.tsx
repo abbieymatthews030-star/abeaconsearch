@@ -292,6 +292,15 @@ function tabFromHash(hash: string): Tab {
   return TAB_IDS.includes(id) ? id : 'search';
 }
 
+function initialQueryFromUrl(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return new URLSearchParams(window.location.search).get('q')?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function siteHost(url: string | undefined): string | null {
   if (!url) return null;
   try {
@@ -306,7 +315,7 @@ export function App(): JSX.Element {
     typeof window !== 'undefined' ? tabFromHash(window.location.hash) : 'search',
   );
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => initialQueryFromUrl());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const clientSettings = useClientSettings();
 
@@ -369,7 +378,10 @@ export function App(): JSX.Element {
     saveHistory([]);
   }, []);
 
-  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+  const [pendingQuery, setPendingQuery] = useState<string | null>(() => {
+    const q = initialQueryFromUrl();
+    return q || null;
+  });
 
   const runFromHistory = (query: string) => {
     setInput(query);
@@ -414,6 +426,7 @@ export function App(): JSX.Element {
     : canonicalHost
       ? canonicalHost
       : 'self-hostable search';
+  const isHome = tab === 'search' && input.trim() === '' && !pendingQuery;
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -423,23 +436,31 @@ export function App(): JSX.Element {
   }, [siteName]);
 
   return (
-    <div className="app" data-density={density} data-tor={torMode ? 'on' : 'off'}>
+    <div
+      className="app"
+      data-density={density}
+      data-tor={torMode ? 'on' : 'off'}
+      data-stage={isHome ? 'home' : 'app'}
+    >
       <div className="app__glow" aria-hidden />
+      <div className="app__grid" aria-hidden />
       <header className="app__header">
-        <button
-          type="button"
-          className="brand"
-          onClick={() => {
-            setInput('');
-            setPendingQuery(null);
-            selectTab('search');
-          }}
-          aria-label={`${siteName} home`}
-        >
-          <Beacon size={48} />
-          <h1>{siteName}</h1>
-          <p>{tagline}</p>
-        </button>
+        {!isHome && (
+          <button
+            type="button"
+            className="brand"
+            onClick={() => {
+              setInput('');
+              setPendingQuery(null);
+              selectTab('search');
+            }}
+            aria-label={`${siteName} home`}
+          >
+            <Beacon size={40} />
+            <h1>{siteName}</h1>
+            <p>{tagline}</p>
+          </button>
+        )}
         <div className="header__tools">
           <button
             type="button"
@@ -854,16 +875,21 @@ function SearchView({
     Boolean(activeSource) ||
     facetTags.length > 0 ||
     facetSources.length > 0;
+  // Always show the answer card when we have prose — including knowledge
+  // fallbacks (confidence "none") and the narrow deny-list response.
   const answerHasProse = Boolean(
     answer &&
-    (answer.confidence !== 'none' ||
+    (answer.denied ||
+      answer.answer.trim().length > 0 ||
       (answer.candidates?.length ?? 0) > 0 ||
       answer.claims.length > 0),
   );
   const showEmpty = Boolean(
     result && query.trim() && hits.length === 0 && !loading && !result.primary,
   );
-  const showReady = Boolean(!query.trim() && !loading);
+  // Use live input (not debounced query) so home/hero exits as soon as the
+  // shell leaves `data-stage="home"` — avoids duplicate brand chrome while typing.
+  const showReady = Boolean(!input.trim() && !loading);
 
   const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -913,77 +939,103 @@ function SearchView({
       )
       .finally(() => setAddingSource(false));
   };
+  const searchForm = (
+    <form
+      className={showReady ? 'search__box search__box--hero' : 'search__box'}
+      onSubmit={submitSearch}
+      role="search"
+    >
+      <input
+        type="search"
+        autoFocus
+        placeholder={showReady ? 'Ask, look up, or search…' : 'Search anything…'}
+        value={input}
+        onChange={(event) => {
+          setSubmittedQuery(null);
+          onInputChange(event.target.value);
+          setSuggestOpen(true);
+        }}
+        onFocus={() => setSuggestOpen(true)}
+        onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+        onKeyDown={(event) => {
+          const open = suggestOpen && suggestions.length > 0;
+          if (event.key === 'Escape') {
+            setSuggestOpen(false);
+            setActiveSuggestion(-1);
+          } else if (event.key === 'ArrowDown') {
+            if (!open) return;
+            event.preventDefault();
+            setActiveSuggestion((i) => (i + 1) % suggestions.length);
+          } else if (event.key === 'ArrowUp') {
+            if (!open) return;
+            event.preventDefault();
+            setActiveSuggestion((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+          } else if (event.key === 'Enter') {
+            const chosen = open ? suggestions[activeSuggestion] : undefined;
+            if (!chosen) return;
+            event.preventDefault();
+            pickSuggestion(chosen);
+          }
+        }}
+        aria-label="Search query"
+        aria-autocomplete="list"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={suggestOpen && suggestions.length > 0}
+        aria-controls="search-suggest-list"
+        aria-activedescendant={
+          activeSuggestion >= 0 ? `search-suggest-${activeSuggestion}` : undefined
+        }
+      />
+      <button type="submit" className="search__submit" disabled={!input.trim()}>
+        Search
+      </button>
+      {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
+        <ul className="suggest" role="listbox" id="search-suggest-list">
+          {suggestions.map((s, i) => (
+            <li key={s}>
+              <button
+                type="button"
+                id={`search-suggest-${i}`}
+                role="option"
+                aria-selected={i === activeSuggestion}
+                className={i === activeSuggestion ? 'active' : undefined}
+                onMouseEnter={() => setActiveSuggestion(i)}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  pickSuggestion(s);
+                }}
+              >
+                {s}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </form>
+  );
+
+  if (showReady) {
+    return (
+      <section className="search search--home" data-search-intent={result?.intent}>
+        <div className="hero">
+          <div className="hero__mark">
+            <Beacon size={148} />
+          </div>
+          <h1 className="hero__brand">{siteName}</h1>
+          <p className="hero__line">
+            Open-web search, cited answers, domains, and plates — on your own domain.
+          </p>
+          {searchForm}
+          <p className="hero__hint">No account required</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="search" data-search-intent={result?.intent}>
-      <form className="search__box" onSubmit={submitSearch} role="search">
-        <input
-          type="search"
-          autoFocus
-          placeholder="Search anything…"
-          value={input}
-          onChange={(event) => {
-            setSubmittedQuery(null);
-            onInputChange(event.target.value);
-            setSuggestOpen(true);
-          }}
-          onFocus={() => setSuggestOpen(true)}
-          onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
-          onKeyDown={(event) => {
-            const open = suggestOpen && suggestions.length > 0;
-            if (event.key === 'Escape') {
-              setSuggestOpen(false);
-              setActiveSuggestion(-1);
-            } else if (event.key === 'ArrowDown') {
-              if (!open) return;
-              event.preventDefault();
-              setActiveSuggestion((i) => (i + 1) % suggestions.length);
-            } else if (event.key === 'ArrowUp') {
-              if (!open) return;
-              event.preventDefault();
-              setActiveSuggestion((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
-            } else if (event.key === 'Enter') {
-              const chosen = open ? suggestions[activeSuggestion] : undefined;
-              if (!chosen) return;
-              event.preventDefault();
-              pickSuggestion(chosen);
-            }
-          }}
-          aria-label="Search query"
-          aria-autocomplete="list"
-          role="combobox"
-          aria-haspopup="listbox"
-          aria-expanded={suggestOpen && suggestions.length > 0}
-          aria-controls="search-suggest-list"
-          aria-activedescendant={
-            activeSuggestion >= 0 ? `search-suggest-${activeSuggestion}` : undefined
-          }
-        />
-        <button type="submit" className="search__submit" disabled={!input.trim()}>
-          Search
-        </button>
-        {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
-          <ul className="suggest" role="listbox" id="search-suggest-list">
-            {suggestions.map((s, i) => (
-              <li key={s}>
-                <button
-                  type="button"
-                  id={`search-suggest-${i}`}
-                  role="option"
-                  aria-selected={i === activeSuggestion}
-                  className={i === activeSuggestion ? 'active' : undefined}
-                  onMouseEnter={() => setActiveSuggestion(i)}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    pickSuggestion(s);
-                  }}
-                >
-                  {s}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </form>
+      {searchForm}
 
       {error && <p className="notice notice--error">{error}</p>}
 
@@ -1229,20 +1281,6 @@ function SearchView({
             )}
           </div>
         )}
-
-      {showReady && (
-        <div className="hero">
-          <div className="hero__mark">
-            <Beacon size={168} />
-          </div>
-          <p className="hero__brand">{siteName}</p>
-          <p className="hero__line">
-            Search your index, the open web, domains, plates, and questions — hosted on your own
-            domain.
-          </p>
-          <p className="hero__hint">Start typing above. No account required on this instance.</p>
-        </div>
-      )}
 
       {result && query.trim() && (
         <details className="devdetails">
@@ -1857,12 +1895,17 @@ function AnswerCard({
       data-source-quality={data?.sourceQuality}
     >
       <div className="answer__head">
-        <span className="answer__tag">SOURCE-BACKED SUMMARY</span>
-        {data && <ConfidenceBadge confidence={data.confidence} />}
+        <span className="answer__tag">
+          {data?.denied ? 'QUERY NOT ANSWERED' : 'SOURCE-BACKED SUMMARY'}
+        </span>
+        {data && !data.denied && <ConfidenceBadge confidence={data.confidence} />}
+        {data?.denied && data.denyCategory && (
+          <span className="badge badge--muted">{data.denyCategory.replaceAll('_', ' ')}</span>
+        )}
         {data?.cached && <span className="badge badge--muted">cached</span>}
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />
-        {data && (
+        {data && !data.denied && (
           <>
             <button type="button" className="answer__refresh" onClick={copyAnswer}>
               {copyNote ?? 'Copy'}

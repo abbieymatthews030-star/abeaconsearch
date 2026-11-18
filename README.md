@@ -7,7 +7,7 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 - **Full-text search** with prefix + fuzzy matching, title/tag boosting, tag facets and highlighted snippets (powered by [MiniSearch](https://github.com/lucaong/minisearch)).
 - **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, and Project Gutenberg. Results are open-web-wide by default (not limited to your local index); set Web search to Off for index-only.
 - **Not indexed** — Beacon asks crawlers to stay away (`noindex` / `robots.txt` Disallow), so the search engine itself does not appear in other search engines.
-- **Answer weave** — question-like queries also get a short written answer built _only_ from retrieved sources (index pages + optional live web search), with per-sentence citations, domain trust tiers, retrieval timestamps and a confidence banner. Works offline as a deterministic weave; upgrades to prose with an LLM key.
+- **Answer weave** — question-like queries get a short written answer from retrieved sources (index + live web), with citations, trust tiers, and a confidence banner. When sources are thin or missing, an LLM knowledge fallback still answers (marked unverified). Only bestiality and sexual/physical violence against women are denied.
 - **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
 - **REST API** built on [Fastify](https://fastify.dev/) with schema validation.
@@ -219,8 +219,7 @@ into the search index as a `plate-check` document — so past checks are searcha
 ## Answer weave
 
 `GET /api/answer?q=…` (and the Search tab, automatically, for question-like
-queries) returns a short written answer assembled **only** from retrieved
-sources:
+queries) returns a short written answer for every allowed topic:
 
 1. **Retrieve** — matching pages from the local index, plus — when
    `BEACON_ANSWER_WEB_SEARCH` names a provider — live web results fetched at
@@ -229,7 +228,9 @@ sources:
 2. **Ground** — the sentences that best answer the query are extracted and tied
    to the source they came from.
 3. **Weave** — those grounded sentences are written into prose by an LLM
-   (`ANTHROPIC_API_KEY`, or any OpenAI-compatible endpoint). With no LLM key the
+   (`ANTHROPIC_API_KEY`, or any OpenAI-compatible endpoint). The model must
+   always answer (no moral refusals); soft refusals are retried. Gaps may be
+   filled from general knowledge and marked unverified. With no LLM key the
    deterministic weave of the extracts is returned instead.
 4. **Attribute** — every sentence carries `[n]` citation markers; each source
    gets a trust tier (`official` / `established` / `community` / `unverified`),
@@ -237,8 +238,10 @@ sources:
    to a source are labelled `unverified`, and a confidence banner
    (`high` / `medium` / `low` / `none`) summarises the whole answer.
 
-Everything is optional — see [`docs/answers.md`](docs/answers.md) for the trust
-tiers and confidence rubric, and [`.env.example`](.env.example) for the knobs.
+The only denied topics are bestiality and sexual or physical violence against
+women (`denied: true`). See [`docs/answers.md`](docs/answers.md) for the trust
+tiers, confidence rubric, and policy details, and [`.env.example`](.env.example)
+for the knobs.
 
 ---
 
