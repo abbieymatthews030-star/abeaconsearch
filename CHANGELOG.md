@@ -8,6 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Home UI polish:** empty Search tab is a single brand-first composition
+  (beacon mark, product name, one line, search CTA). Compact chrome returns
+  once you query. IBM Plex Mono + warmer paper/grid atmosphere.
 - **Always-answer policy:** `/api/answer` answers every topic from retrieved
   sources or, when sources are thin/missing, from an LLM knowledge fallback.
   Soft model refusals are retried. The only denials are bestiality and sexual
