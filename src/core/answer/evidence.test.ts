@@ -66,7 +66,11 @@ describe('looksLikeIdentityQuery', () => {
 
 describe('classifyEntityMatch', () => {
   it('is an exact match when the whole name phrase appears in the title', () => {
-    const result = classifyEntityMatch('Maiz Gustavo', 'Maiz Gustavo - Carpentry Australia', 'Local carpentry services.');
+    const result = classifyEntityMatch(
+      'Maiz Gustavo',
+      'Maiz Gustavo - Carpentry Australia',
+      'Local carpentry services.',
+    );
     expect(result.type).toBe('exact');
     expect(result.candidateName).toBe('maiz gustavo');
   });
@@ -99,16 +103,33 @@ describe('classifyEntityMatch', () => {
   });
 
   it('is neutral ("n/a") for an ordinary non-identity query', () => {
-    expect(classifyEntityMatch('react hooks', 'React Hooks Deep Dive', 'useEffect and useState...').type).toBe('n/a');
+    expect(
+      classifyEntityMatch('react hooks', 'React Hooks Deep Dive', 'useEffect and useState...').type,
+    ).toBe('n/a');
   });
 });
 
 describe('clusterCandidates', () => {
   it('keeps distinct entities in separate clusters by default (never merges without evidence)', () => {
     const sources = [
-      { id: 1, title: 'Maiz Gustavo - Carpentry Australia', entityMatchType: 'exact' as const, candidateName: 'maiz gustavo' },
-      { id: 2, title: 'Gustavo Angel Maddonni', entityMatchType: 'different' as const, candidateName: 'gustavo angel maddonni' },
-      { id: 3, title: 'Los Guardianes del Maiz', entityMatchType: 'different' as const, candidateName: 'los guardianes del maiz' },
+      {
+        id: 1,
+        title: 'Maiz Gustavo - Carpentry Australia',
+        entityMatchType: 'exact' as const,
+        candidateName: 'maiz gustavo',
+      },
+      {
+        id: 2,
+        title: 'Gustavo Angel Maddonni',
+        entityMatchType: 'different' as const,
+        candidateName: 'gustavo angel maddonni',
+      },
+      {
+        id: 3,
+        title: 'Los Guardianes del Maiz',
+        entityMatchType: 'different' as const,
+        candidateName: 'los guardianes del maiz',
+      },
     ];
     const clusters = clusterCandidates(sources);
     expect(clusters).toHaveLength(3);
@@ -117,8 +138,18 @@ describe('clusterCandidates', () => {
 
   it('clusters multiple sources that share an identical normalized candidate name', () => {
     const sources = [
-      { id: 1, title: 'Maiz Gustavo', entityMatchType: 'exact' as const, candidateName: 'maiz gustavo' },
-      { id: 2, title: 'Maiz Gustavo Profile', entityMatchType: 'exact' as const, candidateName: 'maiz gustavo' },
+      {
+        id: 1,
+        title: 'Maiz Gustavo',
+        entityMatchType: 'exact' as const,
+        candidateName: 'maiz gustavo',
+      },
+      {
+        id: 2,
+        title: 'Maiz Gustavo Profile',
+        entityMatchType: 'exact' as const,
+        candidateName: 'maiz gustavo',
+      },
     ];
     const clusters = clusterCandidates(sources);
     expect(clusters).toHaveLength(1);
@@ -127,8 +158,18 @@ describe('clusterCandidates', () => {
 
   it('sorts clusters with an exact match first', () => {
     const sources = [
-      { id: 1, title: 'Topical Thing', entityMatchType: 'topical' as const, candidateName: 'topical thing' },
-      { id: 2, title: 'Maiz Gustavo', entityMatchType: 'exact' as const, candidateName: 'maiz gustavo' },
+      {
+        id: 1,
+        title: 'Topical Thing',
+        entityMatchType: 'topical' as const,
+        candidateName: 'topical thing',
+      },
+      {
+        id: 2,
+        title: 'Maiz Gustavo',
+        entityMatchType: 'exact' as const,
+        candidateName: 'maiz gustavo',
+      },
     ];
     const clusters = clusterCandidates(sources);
     expect(clusters[0]?.matchType).toBe('exact');
@@ -156,10 +197,18 @@ describe('stripLeadingNavList', () => {
 
 describe('scoreRelevance', () => {
   it('scores a title/body match for the query terms highly', () => {
-    expect(scoreRelevance('penguins antarctica', 'Penguins of Antarctica', 'Penguins live in Antarctica.')).toBeGreaterThan(0.5);
+    expect(
+      scoreRelevance(
+        'penguins antarctica',
+        'Penguins of Antarctica',
+        'Penguins live in Antarctica.',
+      ),
+    ).toBeGreaterThan(0.5);
   });
 
   it('scores completely unrelated content near zero', () => {
-    expect(scoreRelevance('penguins antarctica', 'Tax Law Update', 'New invoice regulations for 2026.')).toBeLessThan(0.2);
+    expect(
+      scoreRelevance('penguins antarctica', 'Tax Law Update', 'New invoice regulations for 2026.'),
+    ).toBeLessThan(0.2);
   });
 });

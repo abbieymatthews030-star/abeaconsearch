@@ -897,7 +897,8 @@ function SearchView({
 
       {answerError && answerRequested && (
         <p className="notice notice--error">
-          Couldn’t write a summary. {answerError.length > 160 ? `${answerError.slice(0, 160)}…` : answerError}
+          Couldn’t write a summary.{' '}
+          {answerError.length > 160 ? `${answerError.slice(0, 160)}…` : answerError}
         </p>
       )}
 
@@ -919,7 +920,8 @@ function SearchView({
         ((hits.length > 0 && answer && !answerHasProse) ||
           (synthesis === 'insufficient' && !answerRequested)) && (
           <p className="search__summary-note">
-            I found links for “{query.trim()}”, but their pages did not provide enough reliable text to summarize. Open a source below or try a broader search.
+            I found links for “{query.trim()}”, but their pages did not provide enough reliable text
+            to summarize. Open a source below or try a broader search.
           </p>
         )}
 
@@ -983,8 +985,7 @@ function SearchView({
                   className={activeTags.includes(tag) ? 'chip chip--active' : 'chip'}
                   onClick={() => toggleTag(tag)}
                 >
-                  {tag}{' '}
-                  <span className="chip__count">{formatCount(count, region)}</span>
+                  {tag} <span className="chip__count">{formatCount(count, region)}</span>
                 </button>
               ))}
             </div>
@@ -999,8 +1000,7 @@ function SearchView({
                   className={activeSource === source ? 'chip chip--active' : 'chip'}
                   onClick={() => setActiveSource((prev) => (prev === source ? undefined : source))}
                 >
-                  {source}{' '}
-                  <span className="chip__count">{formatCount(count, region)}</span>
+                  {source} <span className="chip__count">{formatCount(count, region)}</span>
                 </button>
               ))}
             </div>
@@ -1010,9 +1010,7 @@ function SearchView({
 
       <ol
         className={
-          loading && result && result.query !== query.trim()
-            ? 'results results--stale'
-            : 'results'
+          loading && result && result.query !== query.trim() ? 'results results--stale' : 'results'
         }
         aria-busy={loading}
       >
@@ -1597,10 +1595,10 @@ function LibraryView({
                   <span>{relativeTime(doc.updatedAt, region)}</span>
                 </div>
               </div>
-              <button type="button" className="library__remove" onClick={() => openDetail(doc.id)}>
+              <button type="button" className="library__action" onClick={() => openDetail(doc.id)}>
                 view
               </button>
-              <button type="button" className="library__remove" onClick={() => startEdit(doc)}>
+              <button type="button" className="library__action" onClick={() => startEdit(doc)}>
                 edit
               </button>
               <button
@@ -1754,7 +1752,11 @@ function AnswerCard({
         )}
       </div>
 
-      {!data && loading && <p className="answer__body answer__body--wait">Reading sources and preparing a cited summary…</p>}
+      {!data && loading && (
+        <p className="answer__body answer__body--wait">
+          Reading sources and preparing a cited summary…
+        </p>
+      )}
 
       {data && (
         <>
@@ -1957,12 +1959,7 @@ function AddView({
       </label>
       <label>
         Body
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={10}
-          required
-        />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} required />
       </label>
       <button
         type="submit"
@@ -2059,6 +2056,7 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
   const [report, setReport] = useState<{
     errors: Array<{ url: string; error: string }>;
     skipped: Array<{ url: string; reason: string }>;
+    warnings: string[];
   } | null>(null);
 
   const submit = (event: React.FormEvent) => {
@@ -2077,10 +2075,14 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
           .filter(Boolean),
       })
       .then((res) => {
-        setReport({ errors: res.errors, skipped: res.skipped });
+        setReport({
+          errors: res.errors,
+          skipped: res.skipped,
+          warnings: res.warnings ?? [],
+        });
         setStatus({
           kind: 'ok',
-          text: `Crawled ${res.pagesCrawled} pages, indexed ${res.documentsIndexed}, ${res.errors.length} errors, ${res.skipped.length} skipped.`,
+          text: `Crawled ${res.pagesCrawled} pages, indexed ${res.documentsIndexed}, ${res.errors.length} errors, ${res.skipped.length} skipped${res.robotsStatus ? ` (robots: ${res.robotsStatus})` : ''}.`,
         });
         onDone();
       })
@@ -2136,6 +2138,13 @@ function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
         <p className={status.kind === 'ok' ? 'notice notice--ok' : 'notice notice--error'}>
           {status.text}
         </p>
+      )}
+      {report && report.warnings.length > 0 && (
+        <ul className="answer__gaps">
+          {report.warnings.map((warning, i) => (
+            <li key={`warn-${i}`}>{warning}</li>
+          ))}
+        </ul>
       )}
       {report && report.errors.length > 0 && (
         <ul className="answer__gaps">
@@ -2235,6 +2244,14 @@ function PlateReport({ report }: { report: PlateCheck }): JSX.Element {
           </li>
         ))}
       </ul>
+
+      {report.notices?.length > 0 && (
+        <ul className="primary-card__notices">
+          {report.notices.map((notice, i) => (
+            <li key={i}>{notice}</li>
+          ))}
+        </ul>
+      )}
 
       {report.mot && report.mot.tests.length > 0 && (
         <details className="plate__mot">
@@ -2472,8 +2489,8 @@ function DocsView(): JSX.Element {
         network data, an arithmetic expression is evaluated directly, and{' '}
         <code>plate &lt;reg&gt;</code> runs the number plate checker. Everything else is just a
         search. Domain/IP lookups need no API key (DNS and RDAP are open internet infrastructure)
-        and can be toggled in Settings → Domain / IP lookups (
-        <code>BEACON_LOOKUPS_ENABLED</code> only sets the boot default).
+        and can be toggled in Settings → Domain / IP lookups (<code>BEACON_LOOKUPS_ENABLED</code>{' '}
+        only sets the boot default).
       </p>
       <h3>API</h3>
       <ul>
@@ -3179,7 +3196,11 @@ function HealthPanel({
   onRefresh: () => void;
   onSeeDetails: () => void;
 }): JSX.Element {
-  const localIndexRow = ((): { label: string; status: ProviderStatus['status']; detail: string } => {
+  const localIndexRow = ((): {
+    label: string;
+    status: ProviderStatus['status'];
+    detail: string;
+  } => {
     if (!diagnostics && !health) {
       return { label: 'Local index', status: 'error', detail: 'Unreachable' };
     }

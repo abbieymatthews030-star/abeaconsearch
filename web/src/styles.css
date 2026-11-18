@@ -234,6 +234,23 @@ button {
   border-color: var(--fg);
 }
 
+.search__box input:focus-visible,
+.form input:focus-visible,
+.form textarea:focus-visible,
+.plate__input:focus-visible,
+.btn:focus-visible,
+.pager button:focus-visible,
+.tabs__btn:focus-visible,
+.chip:focus-visible,
+.search__filters-toggle:focus-visible,
+.history__query:focus-visible,
+.settings__restore:focus-visible,
+.library__remove:focus-visible,
+.answer__refresh:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+
 .btn,
 .pager button {
   background: transparent;
@@ -463,8 +480,34 @@ button {
 }
 
 .chip--active::before {
-  content: '\00d7'; /* × */
+  content: '\00d7\00a0'; /* × + space */
   color: var(--bg);
+}
+
+.results--stale {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.answer__source {
+  scroll-margin-top: 4rem;
+}
+
+.library__action {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  padding: 0.2rem 0;
+}
+
+.library__action:hover {
+  color: var(--fg);
 }
 
 .chip__count {
@@ -2095,7 +2138,12 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -226,7 +226,8 @@ function outcomeFor(results: number, diagnostics: SearchDiagnostic[]): SearchOut
   if (results > 0 && failed.length > 0) return 'partial';
   if (results > 0) return 'results';
   if (configured.length === 0) return 'unconfigured';
-  if (failed.length > 0 && failed.length === configured.length) return 'partial';
+  // Every configured provider failed and nothing was returned — not a soft "partial".
+  if (failed.length > 0 && failed.length === configured.length) return 'error';
   return 'empty';
 }
 

@@ -58,9 +58,6 @@ export function vcardField(vcardArray: unknown, field: string): string | undefin
   return undefined;
 }
 
-export function eventDate(
-  events: RdapResponse['events'],
-  action: string,
-): string | undefined {
+export function eventDate(events: RdapResponse['events'], action: string): string | undefined {
   return events?.find((event) => event.eventAction === action)?.eventDate;
 }

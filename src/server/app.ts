@@ -75,7 +75,40 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     await app.register(rateLimit, {
       max: config.rateLimit.max,
       timeWindow: config.rateLimit.windowMs,
+      errorResponseBuilder: (_request, context) => ({
+        error: 'rate_limited',
+        message: `Rate limit exceeded, retry in ${Math.ceil(context.ttl / 1000)}s`,
+        retryAfter: Math.ceil(context.ttl / 1000),
+      }),
     });
+  }
+
+  const answerService = createAnswerService(config, { engine, logger });
+  if (answerService) {
+    // Index mutations must not keep serving a cached weave built on old docs.
+    const notify = () => answerService.clearCache();
+    const originalUpsert = engine.upsert.bind(engine);
+    const originalRemove = engine.remove.bind(engine);
+    const originalClear = engine.clear.bind(engine);
+    const originalReplaceAll = engine.replaceAll.bind(engine);
+    engine.upsert = ((input: Parameters<typeof engine.upsert>[0]) => {
+      const doc = originalUpsert(input);
+      notify();
+      return doc;
+    }) as typeof engine.upsert;
+    engine.remove = ((id: string) => {
+      const ok = originalRemove(id);
+      if (ok) notify();
+      return ok;
+    }) as typeof engine.remove;
+    engine.clear = (() => {
+      originalClear();
+      notify();
+    }) as typeof engine.clear;
+    engine.replaceAll = ((docs: Parameters<typeof engine.replaceAll>[0]) => {
+      originalReplaceAll(docs);
+      notify();
+    }) as typeof engine.replaceAll;
   }
 
   const ctx: RouteContext = {
@@ -83,7 +116,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     engine,
     settings,
     plateChecker: createPlateChecker(config),
-    answerService: createAnswerService(config, { engine, logger }),
+    answerService,
   };
   await app.register(apiRoutes(ctx), { prefix: '/api' });
 

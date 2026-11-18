@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Trust / reuse polish (50 items):** plate headlines no longer claim “all checks
+  passed” when DVLA/MOT were skipped; theft/finance guidance moved to `notices`;
+  `checkedAt` is wall-clock with optional `referenceDate`; unsupported answer
+  sentences are marked `(unverified)` and high confidence requires a live fetch;
+  corrupt index files refuse to load; dropped docs and persist failures are
+  surfaced; document mutations flush immediately; answer cache clears on index
+  change; all-failed web search returns `outcome: "error"`; health/diagnostics
+  report `degraded`; answer busy is `503 busy` (not rate-limit); rate-limit JSON
+  is shaped consistently; robots fail-open is warned in crawl/CLI; highlights use
+  word boundaries; did-you-mean rewrites multi-word queries; stats expose only
+  the index basename; settings PATCH fails when any field errors; timeouts say
+  timed out; domain AAAA/MX gaps are noticed; `web=true` forces web search; MCP
+  blank search sorts newest; README naming + API table completed.
+- **Web UI polish:** safer API error parsing, favicon, hash tabs, brand
+  consistency, confirms for destructive clears/resets, crawl/add success stays
+  visible, stale results dim while loading, answer copy + smooth citations,
+  real answer errors, a11y focus/`aria-*`, history validation and immediate
+  re-run, locale counts/dates, domain/IP empty states, honest local-index
+  health, settings save errors, required document body, and reduced-motion
+  transitions.
+
 ### Added
 
 - **Answer weave** (`src/core/answer/`): `GET /api/answer?q=` and the Search tab

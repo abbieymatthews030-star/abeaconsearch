@@ -172,7 +172,8 @@ export function scoreContentQuality(text: string): { score: number; isBoilerplat
   const stopwordScore = Math.min(1, stopwords / 0.2); // real English prose is rarely under ~20% stopwords
   const boilerplateScore = Math.max(0, 1 - boilerplate * 2.5);
 
-  const score = camelScore * 0.3 + sentenceScore * 0.25 + stopwordScore * 0.2 + boilerplateScore * 0.25;
+  const score =
+    camelScore * 0.3 + sentenceScore * 0.25 + stopwordScore * 0.2 + boilerplateScore * 0.25;
   return { score, isBoilerplate: score < 0.4 };
 }
 
@@ -198,12 +199,60 @@ export function scoreRelevance(query: string, title: string, text: string): numb
 // signal (see `looksLikeIdentityQuery`). This will not catch every topical
 // two-word query; see the limitation noted there.
 const TOPIC_WORDS = new Set([
-  'hooks', 'guide', 'guides', 'tutorial', 'tutorials', 'docs', 'documentation', 'api', 'apis',
-  'setup', 'config', 'configuration', 'framework', 'frameworks', 'library', 'libraries', 'basics',
-  'overview', 'introduction', 'intro', 'deep', 'dive', 'review', 'reviews', 'comparison', 'compare',
-  'vs', 'versus', 'pricing', 'features', 'update', 'updates', 'release', 'releases', 'tips', 'tricks',
-  'examples', 'example', 'reference', 'cheatsheet', 'howto', 'faq', 'troubleshooting', 'recipe',
-  'recipes', 'weather', 'news', 'results', 'score', 'scores', 'map', 'maps', 'directions', 'calculator',
+  'hooks',
+  'guide',
+  'guides',
+  'tutorial',
+  'tutorials',
+  'docs',
+  'documentation',
+  'api',
+  'apis',
+  'setup',
+  'config',
+  'configuration',
+  'framework',
+  'frameworks',
+  'library',
+  'libraries',
+  'basics',
+  'overview',
+  'introduction',
+  'intro',
+  'deep',
+  'dive',
+  'review',
+  'reviews',
+  'comparison',
+  'compare',
+  'vs',
+  'versus',
+  'pricing',
+  'features',
+  'update',
+  'updates',
+  'release',
+  'releases',
+  'tips',
+  'tricks',
+  'examples',
+  'example',
+  'reference',
+  'cheatsheet',
+  'howto',
+  'faq',
+  'troubleshooting',
+  'recipe',
+  'recipes',
+  'weather',
+  'news',
+  'results',
+  'score',
+  'scores',
+  'map',
+  'maps',
+  'directions',
+  'calculator',
 ]);
 
 /**
@@ -234,7 +283,9 @@ export function looksLikeIdentityQuery(query: string): boolean {
 
 /** Strip a trailing " - Site Name" / " | Site Name" page-title suffix, kept short so a real subtitle survives. */
 export function cleanTitle(title: string): string {
-  return normalizeWhitespace(title).replace(/\s*[-|—–]\s*[^-|—–]{2,40}$/, '').trim();
+  return normalizeWhitespace(title)
+    .replace(/\s*[-|—–]\s*[^-|—–]{2,40}$/, '')
+    .trim();
 }
 
 /** Does `text` start with 1-4 consecutive Title-Case words — the shape of a proper name? */
@@ -337,7 +388,13 @@ export function clusterCandidates<
       });
     }
   }
-  const order: Record<EntityMatchType, number> = { exact: 0, partial: 1, topical: 2, different: 3, 'n/a': 4 };
+  const order: Record<EntityMatchType, number> = {
+    exact: 0,
+    partial: 1,
+    topical: 2,
+    different: 3,
+    'n/a': 4,
+  };
   return [...clusters.values()].sort((a, b) => order[a.matchType] - order[b.matchType]);
 }
 
@@ -349,7 +406,12 @@ const TRUST_QUALITY: Record<TrustTier, number> = {
 };
 
 /** Evaluate one retrieved source's evidence quality for `query`. Never throws. */
-export function evaluateSource(query: string, title: string, text: string, trust: TrustTier): SourceEvidence {
+export function evaluateSource(
+  query: string,
+  title: string,
+  text: string,
+  trust: TrustTier,
+): SourceEvidence {
   const { score: contentQualityScore, isBoilerplate } = scoreContentQuality(text);
   const relevanceScore = scoreRelevance(query, title, text);
   const entity = classifyEntityMatch(query, title, text);
@@ -361,11 +423,13 @@ export function evaluateSource(query: string, title: string, text: string, trust
 
   let reason: string;
   if (isBoilerplate) {
-    reason = 'extracted content is mostly navigation, footer, or boilerplate text — not usable as evidence';
+    reason =
+      'extracted content is mostly navigation, footer, or boilerplate text — not usable as evidence';
   } else if (entity.type === 'different') {
     reason = `this page appears to be about "${entity.candidateName}", a different entity than the one searched for`;
   } else if (entity.type === 'partial' || entity.type === 'topical') {
-    reason = 'matching page found, but it does not independently establish the identity being searched for';
+    reason =
+      'matching page found, but it does not independently establish the identity being searched for';
   } else if (relevanceScore < 0.2) {
     reason = 'page content does not substantively address the query';
   } else {

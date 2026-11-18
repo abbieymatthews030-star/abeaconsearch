@@ -77,4 +77,9 @@ describe('highlight', () => {
   it('is case-insensitive', () => {
     expect(highlight('Fox and FOX', ['fox'])).toBe('<mark>Fox</mark> and <mark>FOX</mark>');
   });
+
+  it('does not highlight terms inside longer words', () => {
+    expect(highlight('category of cats', ['cat'])).toBe('category of cats');
+    expect(highlight('the cat sat', ['cat'])).toBe('the <mark>cat</mark> sat');
+  });
 });

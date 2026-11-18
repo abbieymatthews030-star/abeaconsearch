@@ -179,7 +179,7 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
       title: 'Search the Beacon index',
       description: 'Full-text search against a running Beacon Search instance.',
       inputSchema: {
-        query: z.string().describe('Search query (blank returns the newest documents)'),
+        query: z.string().describe('Search query (blank lists documents newest-first)'),
         limit: z.number().int().min(1).max(50).optional(),
         tags: z.array(z.string()).optional().describe('Only return documents with all these tags'),
         source: z.string().optional(),
@@ -187,12 +187,14 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     },
     async (args) => {
       try {
+        const blank = args.query.trim().length === 0;
         return ok(
           await beacon.search({
             q: args.query,
             limit: args.limit,
             tags: args.tags,
             source: args.source,
+            sort: blank ? 'newest' : undefined,
           }),
         );
       } catch (error) {

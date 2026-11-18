@@ -157,6 +157,35 @@ describe('runUniversalSearch', () => {
     expect(result.outcome).toBe('partial');
   });
 
+  it('returns error when every configured web provider fails and nothing matches', async () => {
+    const engine = new SearchEngine();
+    const result = await runUniversalSearch({
+      query: 'abbiey matthews',
+      search: searchQuery('abbiey matthews'),
+      engine,
+      config,
+      backends: [
+        backend(
+          'Brave Search',
+          async () => {
+            throw new Error('HTTP 503');
+          },
+          'brave',
+        ),
+        backend(
+          'DuckDuckGo',
+          async () => {
+            throw new Error('HTTP 502');
+          },
+          'duckduckgo',
+        ),
+      ],
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.outcome).toBe('error');
+  });
+
   it('names the missing provider settings when nothing is configured', async () => {
     const engine = new SearchEngine();
     const result = await runUniversalSearch({

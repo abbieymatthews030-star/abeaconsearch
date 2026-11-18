@@ -54,7 +54,7 @@ export class BeaconClient {
   }
 
   health(): Promise<{
-    status: 'ok';
+    status: 'ok' | 'degraded';
     documents: number;
     uptimeSeconds: number;
     plateChecks: { vehicleData: boolean; motHistory: boolean };
@@ -73,10 +73,12 @@ export class BeaconClient {
     limit?: number;
     tags?: string[];
     source?: string;
+    sort?: 'relevance' | 'newest' | 'oldest' | 'title';
   }): Promise<SearchResponse> {
     const qs = new URLSearchParams({ q: params.q });
     if (params.limit) qs.set('limit', String(params.limit));
     if (params.source) qs.set('source', params.source);
+    if (params.sort && params.sort !== 'relevance') qs.set('sort', params.sort);
     for (const tag of params.tags ?? []) qs.append('tags', tag);
     return this.request(`/api/search?${qs.toString()}`);
   }

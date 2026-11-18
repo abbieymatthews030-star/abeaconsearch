@@ -175,7 +175,13 @@ async function fetchWebPage(
 
   let robots = robotsCache.get(parsed.origin);
   if (!robots) {
-    robots = await fetchRobots(parsed.origin, userAgent, fetchImpl ?? fetch, config.fetchTimeoutMs);
+    const fetched = await fetchRobots(
+      parsed.origin,
+      userAgent,
+      fetchImpl ?? fetch,
+      config.fetchTimeoutMs,
+    );
+    robots = fetched.rules;
     robotsCache.set(parsed.origin, robots);
   }
   if (!robots.isAllowed(parsed.pathname)) {

@@ -112,7 +112,7 @@ export interface PlateCheck {
      * `invalid` — not a valid UK registration mark.
      * `fail` — valid mark, but a check failed (e.g. untaxed, MOT expired).
      * `attention` — valid mark with warnings only.
-     * `ok` — valid mark, everything passed.
+     * `ok` — valid mark, everything that ran passed.
      */
     status: 'ok' | 'attention' | 'fail' | 'invalid';
     headline: string;
@@ -121,5 +121,10 @@ export interface PlateCheck {
     fail: number;
   };
   sources: string[];
+  /** Wall-clock time the check ran (ISO). */
   checkedAt: string;
+  /** Date the age / expiry maths were evaluated against, when set. */
+  referenceDate?: string;
+  /** Guidance that is not a pass/fail check (e.g. paid services). */
+  notices: string[];
 }

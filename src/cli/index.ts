@@ -140,8 +140,13 @@ program
       await engine.flush();
       process.stdout.write(
         `Crawled ${result.pagesCrawled} pages, indexed ${result.pages.length}, ` +
-          `${result.errors.length} errors\n`,
+          `${result.errors.length} errors, ${result.skipped.length} skipped` +
+          (result.robotsStatus ? ` (robots: ${result.robotsStatus})` : '') +
+          `\n`,
       );
+      for (const warning of result.warnings ?? []) {
+        process.stdout.write(`  ! ${warning}\n`);
+      }
     },
   );
 

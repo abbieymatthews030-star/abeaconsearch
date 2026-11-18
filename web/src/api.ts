@@ -128,8 +128,7 @@ function errorMessage(payload: unknown, status: number): string {
     error?: unknown;
   };
   const code = typeof body.error === 'string' ? body.error : '';
-  const base =
-    typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
+  const base = typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
   const message = code === 'rate_limited' ? `${base} (rate limited)` : base;
 
   const parts: string[] = [];
@@ -160,7 +159,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (error) {
     throw new Error(
-      error instanceof Error ? `Network error: ${error.message}` : 'Network error talking to the API',
+      error instanceof Error
+        ? `Network error: ${error.message}`
+        : 'Network error talking to the API',
     );
   }
   const text = await response.text();
@@ -305,6 +306,8 @@ export const api = {
     documentsIndexed: number;
     errors: Array<{ url: string; error: string }>;
     skipped: Array<{ url: string; reason: string }>;
+    robotsStatus?: 'ok' | 'missing' | 'error' | 'disabled';
+    warnings?: string[];
   }> {
     return request('/api/crawl', { method: 'POST', body: JSON.stringify(input) });
   },
