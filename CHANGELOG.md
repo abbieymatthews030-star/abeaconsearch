@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Tor mode:** header Tor toggle (UI ~50% purple / 25% white / 25% black) that
+  searches onion services via Ahmia + a curated Tor directory, and opens
+  `.onion` links through Beacon’s SOCKS5h proxy (`GET /api/tor/browse`,
+  `GET /api/tor/status`, `?tor=true` on `/api/query`). Docker Compose ships a
+  `tor` sidecar (`dperson/torproxy`) so users do not need Tor Browser.
+
 ### Fixed
 
 - **Trust / reuse polish (50 items):** plate headlines no longer claim “all checks

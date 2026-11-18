@@ -10,6 +10,8 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
 - **REST API** built on [Fastify](https://fastify.dev/) with schema validation.
 - **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites.
+- **Tor mode** — one-click onion / Tor-directory search. Results open through Beacon’s
+  SOCKS5h proxy (Compose includes a Tor sidecar), so users do not need Tor Browser.
 - **Built-in crawler** that indexes a website's pages and respects `robots.txt`.
 - **CLI** (`beacon`) for scripting: add, import, crawl, search, stats, plate.
 - **Zero-config**: every setting has a sane default. Point it at content and go.
@@ -259,6 +261,9 @@ See [`.env.example`](.env.example) for the full list. Common ones:
 | `BEACON_CORS_ORIGIN`     | _(all)_             | Comma-separated allowed origins  |
 | `BEACON_LOG_LEVEL`       | `info`              | `trace`…`error`, or `silent`     |
 | `BEACON_CRAWL_MAX_PAGES` | `50`                | Default crawl page budget        |
+| `BEACON_TOR_ENABLED`     | `true`              | Tor-mode search + onion browse   |
+| `BEACON_TOR_SOCKS`       | `socks5h://127.0.0.1:9050` | Tor SOCKS5h endpoint      |
+| `BEACON_TOR_TIMEOUT_MS`  | `45000`             | Tor fetch timeout                |
 
 ---
 

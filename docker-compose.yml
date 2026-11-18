@@ -12,14 +12,35 @@ services:
       BEACON_LOOKUPS_ENABLED: 'false'
       BEACON_ANSWER_ALLOW_PRIVATE: 'false'
       BEACON_CRAWL_ALLOW_PRIVATE: 'false'
+      BEACON_TOR_ENABLED: 'true'
+      BEACON_TOR_SOCKS: socks5h://tor:9050
     volumes:
       - beacon-data:/data
     expose:
       - '7700'
+    depends_on:
+      - tor
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app
+
+  # SOCKS5h proxy so Beacon can search and open .onion sites without users
+  # installing Tor Browser. Traffic stays on the compose network (not published).
+  tor:
+    image: dperson/torproxy:latest
+    environment:
+      # Keep the container as a SOCKS exit only — no HTTP proxy needed.
+      TOR_NewCircuitPeriod: '60'
+    expose:
+      - '9050'
+    restart: unless-stopped
     cap_drop:
       - ALL
     security_opt:

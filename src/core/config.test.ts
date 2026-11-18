@@ -30,6 +30,8 @@ describe('loadConfig', () => {
     expect(config.port).toBe(7700);
     expect(config.plate.timeoutMs).toBe(12_000);
     expect(config.plate.dvlaVesApiKey).toBeUndefined();
+    expect(config.tor.enabled).toBe(true);
+    expect(config.tor.socksUrl).toBe('socks5h://127.0.0.1:9050');
   });
 
   it('trims string env values', () => {

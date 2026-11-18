@@ -18,6 +18,7 @@ import {
   type SearchAction,
   type SearchSort,
   type SettingsEntry,
+  type TorStatusResponse,
   type TrustTier,
   type UniversalQueryResponse,
 } from './api';
@@ -277,6 +278,7 @@ function countConnectedSources(health: HealthResponse | null): number {
   if (health.plateChecks.motHistory) n += 1;
   if (health.answer.webSearch) n += 1;
   if (health.answer.llm.length > 0) n += 1;
+  if (health.tor?.enabled) n += 1;
   return n;
 }
 
@@ -369,35 +371,85 @@ export function App(): JSX.Element {
     typeof clientSettings.values.interfaceDensity === 'string'
       ? clientSettings.values.interfaceDensity
       : 'comfortable';
+  const torMode = clientSettings.values.torMode === true;
+  const [torStatus, setTorStatus] = useState<TorStatusResponse | null>(null);
+
+  useEffect(() => {
+    if (!torMode) {
+      setTorStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    api
+      .torStatus(controller.signal)
+      .then(setTorStatus)
+      .catch(() =>
+        setTorStatus({
+          enabled: false,
+          socksUrl: '',
+          reachable: false,
+          error: 'Could not reach Tor status endpoint',
+          checkedAt: new Date().toISOString(),
+        }),
+      );
+    return () => controller.abort();
+  }, [torMode, health?.tor?.socksUrl]);
 
   return (
-    <div className="app" data-density={density}>
+    <div className="app" data-density={density} data-tor={torMode ? 'on' : 'off'}>
       <header className="app__header">
         <div className="brand">
           <Beacon size={40} />
           <h1>Beacon Search</h1>
-          <p>self-hostable search</p>
+          <p>{torMode ? 'tor · onion search' : 'self-hostable search'}</p>
         </div>
-        <nav className="tabs" aria-label="Sections">
-          {(
-            [
-              ['search', 'Search'],
-              ['history', 'History'],
-              ['settings', 'Settings'],
-              ['docs', 'Docs'],
-            ] as Array<[Tab, string]>
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={tab === id ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
-              onClick={() => selectTab(id)}
-              aria-current={tab === id ? 'page' : undefined}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+        <div className="header__tools">
+          <button
+            type="button"
+            className={torMode ? 'tor-toggle tor-toggle--on' : 'tor-toggle'}
+            aria-pressed={torMode}
+            title={
+              torMode
+                ? 'Tor mode on — onion results open through Beacon'
+                : 'Turn on Tor mode for onion / deep-web search'
+            }
+            onClick={() => clientSettings.setValue('torMode', !torMode)}
+          >
+            <span className="tor-toggle__mark" aria-hidden>
+              ◉
+            </span>
+            Tor
+          </button>
+          <nav className="tabs" aria-label="Sections">
+            {(
+              [
+                ['search', 'Search'],
+                ['history', 'History'],
+                ['settings', 'Settings'],
+                ['docs', 'Docs'],
+              ] as Array<[Tab, string]>
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={tab === id ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
+                onClick={() => selectTab(id)}
+                aria-current={tab === id ? 'page' : undefined}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+        {torMode && (
+          <p className="tor-status" role="status">
+            {torStatus == null
+              ? 'Checking Tor SOCKS…'
+              : torStatus.reachable
+                ? `Tor circuit ready${torStatus.exitIp ? ` · exit ${torStatus.exitIp}` : ''}`
+                : `Tor offline — ${torStatus.error ?? 'start the Tor sidecar or a local SOCKS proxy'}`}
+          </p>
+        )}
       </header>
 
       <main className="app__main">
@@ -480,6 +532,7 @@ function SearchView({
   const prefix = clientSettings.values.prefix !== false;
   const webModeRaw = String(clientSettings.values.webMode ?? 'auto');
   const webMode = webModeRaw === 'off' || webModeRaw === 'force' ? webModeRaw : 'auto';
+  const torMode = clientSettings.values.torMode === true;
   const directAnswers = health?.answer.autoAnswer ?? true;
   const citationsVisible = clientSettings.values.citationsVisible !== false;
   const region = clientSettings.values.region;
@@ -562,11 +615,12 @@ function SearchView({
     setAnswerError(null);
     setAnswerRequested(false);
     setAnswerLoading(false);
-    if (!answersEnabled || !directAnswers || !answerQuery || synthesis !== 'possible') return;
+    if (torMode || !answersEnabled || !directAnswers || !answerQuery || synthesis !== 'possible')
+      return;
     runAnswer(answerQuery, false, citedUrls);
     // citedUrls is derived from `result`; depending on the array identity would refetch every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answerQuery, synthesis, answersEnabled, directAnswers, result, runAnswer]);
+  }, [answerQuery, synthesis, answersEnabled, directAnswers, torMode, result, runAnswer]);
 
   const freshnessWas = useRef(freshness);
   useEffect(() => {
@@ -593,6 +647,7 @@ function SearchView({
     fuzzy,
     allowPartialMatch,
     prefix,
+    torMode,
     forceWeb,
     webMode,
   ]);
@@ -608,13 +663,15 @@ function SearchView({
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
-    const webParam: 'force' | 'off' | undefined = forceWeb
-      ? 'force'
-      : webMode === 'force'
+    const webParam: 'force' | 'off' | undefined = torMode
+      ? 'off'
+      : forceWeb
         ? 'force'
-        : webMode === 'off'
-          ? 'off'
-          : undefined;
+        : webMode === 'force'
+          ? 'force'
+          : webMode === 'off'
+            ? 'off'
+            : undefined;
     api
       .query(
         {
@@ -629,6 +686,7 @@ function SearchView({
           fuzzy,
           prefix,
           web: webParam,
+          tor: torMode || undefined,
         },
         controller.signal,
       )
@@ -658,6 +716,7 @@ function SearchView({
     activeSource,
     forceWeb,
     webMode,
+    torMode,
     retryNonce,
   ]);
 
@@ -1031,7 +1090,11 @@ function SearchView({
             )}
             <div className="result__foot">
               <span className="result__source">
-                {hit.origin === 'web' ? `Web · ${hit.provider}` : `Your index · ${hit.provider}`}
+                {torMode || hit.tags.includes('onion')
+                  ? `Tor · ${hit.provider}`
+                  : hit.origin === 'web'
+                    ? `Web · ${hit.provider}`
+                    : `Your index · ${hit.provider}`}
               </span>
               {hit.updatedAt && <span>{relativeTime(hit.updatedAt, region)}</span>}
               {hit.tags.map((tag) => (
@@ -2738,8 +2801,15 @@ const PROVIDER_GROUP_LABEL: Record<ProviderStatus['group'], string> = {
   network: 'Network',
   vehicle: 'Vehicle data',
   ai: 'Answers',
+  privacy: 'Privacy',
 };
-const PROVIDER_GROUPS: Array<ProviderStatus['group']> = ['web', 'network', 'vehicle', 'ai'];
+const PROVIDER_GROUPS: Array<ProviderStatus['group']> = [
+  'web',
+  'network',
+  'vehicle',
+  'ai',
+  'privacy',
+];
 
 function SourcesSection({
   providers,

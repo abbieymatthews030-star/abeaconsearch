@@ -21,6 +21,16 @@ export interface Config {
   answer: AnswerConfig;
   lookups: LookupsConfig;
   rateLimit: RateLimitConfig;
+  tor: TorConfig;
+}
+
+export interface TorConfig {
+  /** When false, Tor routes and Tor-mode search are disabled. */
+  enabled: boolean;
+  /** socks5h URL so Tor resolves .onion names (e.g. socks5h://127.0.0.1:9050). */
+  socksUrl: string;
+  /** Per-request timeout for Tor SOCKS fetches (ms). */
+  timeoutMs: number;
 }
 
 export interface RateLimitConfig {
@@ -129,12 +139,13 @@ function readOptional(name: string): string | undefined {
 }
 
 export interface ConfigOverrides extends Partial<
-  Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit'>
+  Omit<Config, 'plate' | 'answer' | 'lookups' | 'rateLimit' | 'tor'>
 > {
   plate?: Partial<PlateConfig>;
   answer?: Partial<AnswerConfig>;
   lookups?: Partial<LookupsConfig>;
   rateLimit?: Partial<RateLimitConfig>;
+  tor?: Partial<TorConfig>;
 }
 
 const WEB_SEARCH_PROVIDERS = ['brave', 'tavily', 'searxng'] as const;
@@ -231,11 +242,21 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       max: readInt('BEACON_RATE_LIMIT_MAX', 200),
       windowMs: readInt('BEACON_RATE_LIMIT_WINDOW_MS', 60_000),
     },
+    tor: {
+      // On by default so a Compose stack with the Tor sidecar "just works";
+      // operators can flip BEACON_TOR_ENABLED=false to refuse Tor-mode traffic.
+      enabled: readBool('BEACON_TOR_ENABLED', true),
+      // Prefer socks5h so Tor resolves .onion names (socks5 would use local DNS).
+      socksUrl: (() => {
+        const raw = readString('BEACON_TOR_SOCKS', 'socks5h://127.0.0.1:9050');
+        return raw.replace(/^socks5:\/\//i, 'socks5h://');
+      })(),
+      timeoutMs: readInt('BEACON_TOR_TIMEOUT_MS', 45_000),
+    },
   };
 
-  // `plate` / `answer` / `lookups` / `rateLimit` are merged rather than
-  // replaced so callers can override a single nested field without restating
-  // the whole sub-config.
+  // Nested configs are merged rather than replaced so callers can override a
+  // single nested field without restating the whole sub-config.
   return {
     ...base,
     ...overrides,
@@ -243,5 +264,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     answer: { ...base.answer, ...overrides.answer },
     lookups: { ...base.lookups, ...overrides.lookups },
     rateLimit: { ...base.rateLimit, ...overrides.rateLimit },
+    tor: { ...base.tor, ...overrides.tor },
   };
 }
