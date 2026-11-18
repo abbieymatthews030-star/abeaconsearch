@@ -69,7 +69,8 @@ describe('deep keyless providers', () => {
         snippet: '2024 · Quantum widgets matter',
       },
     ]);
-    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('api.openalex.org/works');
+    const calledUrl = fetchImpl.mock.calls.at(0)?.at(0);
+    expect(String(calledUrl)).toContain('api.openalex.org/works');
   });
 
   it('maps Crossref items to DOI URLs', async () => {
