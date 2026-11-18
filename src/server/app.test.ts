@@ -42,8 +42,53 @@ describe('HTTP API', () => {
       documents: 0,
       plateChecks: expect.any(Object),
       answer: { enabled: true, webSearch: null, llm: [] },
+      tor: { enabled: true, socksUrl: expect.stringContaining('socks') },
     });
     expect(Object.keys(bare.json()).sort()).toEqual(Object.keys(api.json()).sort());
+  });
+
+  it('refuses clearnet hosts on the Tor browse proxy', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/tor/browse?url=' + encodeURIComponent('https://example.com/'),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatch(/onion/i);
+  });
+
+  it('returns Tor-mode search diagnostics when SOCKS is unreachable', async () => {
+    // Point at a closed local port so this stays fast even if a real Tor is running.
+    const isolatedDir = await mkdtemp(path.join(tmpdir(), 'beacon-tor-'));
+    const config = loadConfig({
+      dataDir: isolatedDir,
+      indexFile: path.join(isolatedDir, 'index.json'),
+      webDir: path.join(isolatedDir, 'nonexistent-web'),
+      logLevel: 'silent',
+      persistDebounceMs: 0,
+      tor: { socksUrl: 'socks5h://127.0.0.1:1', timeoutMs: 800 },
+    });
+    const logger = createLogger(config);
+    const engine = new PersistentEngine({ indexFile: config.indexFile, debounceMs: 0, logger });
+    await engine.load();
+    const torApp = await buildApp({ config, engine, logger });
+    await torApp.ready();
+    try {
+      const res = await torApp.inject({
+        method: 'GET',
+        url: '/api/query?q=privacy&tor=true&limit=5',
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.kind).toBe('general');
+      expect(body.results).toEqual([]);
+      expect(body.outcome).toBe('partial');
+      expect(body.diagnostics.some((d: { id: string; status: string }) => d.id === 'tor' && d.status === 'error')).toBe(
+        true,
+      );
+    } finally {
+      await torApp.close();
+      await rm(isolatedDir, { recursive: true, force: true });
+    }
   });
 
   it('does not return an unrelated local document for a person-name query', async () => {

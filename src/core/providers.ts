@@ -4,8 +4,9 @@ import type { Config } from './config.js';
 import { lookupDomain } from './lookups/domain.js';
 import type { PlateChecker } from './plate/checker.js';
 import type { PersistentEngine } from './store.js';
+import { probeTorSocks } from './tor/index.js';
 
-export type ProviderGroup = 'web' | 'network' | 'vehicle' | 'ai';
+export type ProviderGroup = 'web' | 'network' | 'vehicle' | 'ai' | 'privacy';
 export type ProviderStatusValue =
   'connected' | 'available' | 'disabled' | 'not_configured' | 'error';
 
@@ -159,6 +160,26 @@ export function listProviders(deps: ProvidersDeps, cache: ProbeCache): ProviderS
       },
       cache,
     ),
+    config.tor.enabled
+      ? resolve(
+          {
+            id: 'tor',
+            label: 'Tor (onion search + browse)',
+            group: 'privacy',
+            configured: true,
+            unconfiguredDetail: '',
+            configuredDetail: `SOCKS ${config.tor.socksUrl}`,
+          },
+          cache,
+        )
+      : {
+          id: 'tor',
+          label: 'Tor (onion search + browse)',
+          group: 'privacy',
+          status: 'disabled',
+          detail: 'disabled (BEACON_TOR_ENABLED=false)',
+          testable: false,
+        },
   ];
 }
 
@@ -250,6 +271,21 @@ export async function testProvider(id: string, deps: ProvidersDeps): Promise<Pro
           extracts: [{ id: 1, source: 'test', text: 'OK.' }],
         });
         return finish('connected', `${llm.name} responded`);
+      }
+      case 'tor': {
+        if (!deps.config.tor.enabled) return finish('disabled', 'disabled in config');
+        const probe = await probeTorSocks(
+          deps.config.tor.socksUrl,
+          Math.min(deps.config.tor.timeoutMs, 15_000),
+        );
+        return probe.ok
+          ? finish(
+              'connected',
+              probe.exitIp
+                ? `Tor circuit up (exit ${probe.exitIp})`
+                : 'Tor circuit up via SOCKS',
+            )
+          : finish('error', probe.error);
       }
       default:
         return finish('error', 'unknown provider');

@@ -108,6 +108,17 @@ export interface HealthResponse {
   plateChecks: { vehicleData: boolean; motHistory: boolean };
   answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
   lookups: { enabled: boolean };
+  tor?: { enabled: boolean; socksUrl: string };
+}
+
+export interface TorStatusResponse {
+  enabled: boolean;
+  socksUrl: string;
+  reachable: boolean;
+  isTor?: boolean;
+  exitIp?: string;
+  error?: string;
+  checkedAt: string;
 }
 
 export interface DocumentsResponse {
@@ -198,6 +209,8 @@ export interface SearchParams {
   prefix?: boolean;
   /** `force` always searches the web; `off` never does. Omit for auto. */
   web?: 'force' | 'off';
+  /** Tor mode: onion / Tor-directory results only, opened through Beacon. */
+  tor?: boolean;
 }
 
 function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
@@ -210,6 +223,7 @@ function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
   if (params.fuzzy === false) qs.set('fuzzy', 'false');
   if (params.prefix === false) qs.set('prefix', 'false');
   if (params.web) qs.set('web', params.web);
+  if (params.tor) qs.set('tor', 'true');
   for (const tag of params.tags ?? []) qs.append('tags', tag);
 }
 
@@ -249,6 +263,9 @@ export const api = {
   },
   health(): Promise<HealthResponse> {
     return request<HealthResponse>('/api/health');
+  },
+  torStatus(signal?: AbortSignal): Promise<TorStatusResponse> {
+    return request<TorStatusResponse>('/api/tor/status', { signal });
   },
   answer(
     q: string,
