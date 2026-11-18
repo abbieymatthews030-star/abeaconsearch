@@ -2616,11 +2616,13 @@ function AboutView({
       )}
       <h3>What you can search</h3>
       <p>
-        The Search box is universal. Alongside the local index, Beacon classifies what you typed:
-        domains resolve via DNS + RDAP, IPs get reverse DNS + RDAP, arithmetic is evaluated
-        directly, and <code>plate &lt;reg&gt;</code> runs the number plate checker. Questions get a
-        short cited answer woven only from retrieved sources. Optional Tor mode searches onion
-        services through a SOCKS proxy.
+        The Search box is universal. Every query fans out across live web sources (DuckDuckGo and
+        other configured providers) and merges those hits with your local index — like Google or
+        DuckDuckGo, not only pages you have crawled. Beacon also classifies what you typed: domains
+        resolve via DNS + RDAP, IPs get reverse DNS + RDAP, arithmetic is evaluated directly, and{' '}
+        <code>plate &lt;reg&gt;</code> runs the number plate checker. Questions get a short cited
+        answer woven only from retrieved sources. Optional Tor mode searches onion services through
+        a SOCKS proxy. This site asks other search engines not to index it.
       </p>
       <h3>Self-host on your domain</h3>
       <p>

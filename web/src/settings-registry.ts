@@ -141,7 +141,7 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     section: 'search',
     label: 'Web search',
     description:
-      'Auto lets Beacon decide when to search the web. Off never searches the web. Force always does.',
+      'Auto and Force search the open web on every query (like Google / DuckDuckGo), merged with your local index. Off uses the local index only.',
     type: 'select',
     scope: 'client',
     defaultValue: 'auto',

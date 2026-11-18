@@ -347,9 +347,9 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       .union([z.boolean(), z.string()])
       .optional()
       .transform((v): 'auto' | 'off' | 'force' => {
+        // Default on: every query fans out to live web providers unless
+        // the caller explicitly opts out with web=off / false.
         if (v === undefined) return 'auto';
-        // Boolean true / "true" / "on" / "1" mean "search the web", i.e. force —
-        // not auto (which often skips web when the local index already matched).
         if (typeof v === 'boolean') return v ? 'force' : 'off';
         const s = v.trim().toLowerCase();
         if (s === 'force' || s === 'true' || s === 'on' || s === '1') return 'force';
@@ -364,11 +364,12 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     });
 
     // --- Universal query ------------------------------------------------------
-    // One box, many shapes: classify the raw text, search the local index with
-    // a relevance gate, and — when that index has nothing useful — ask every
-    // configured web provider. Domain / IP / plate / calculation cards still
-    // attach alongside the result list. With `tor=true`, clearnet search is
-    // skipped and results come only from onion / Tor-directory sources.
+    // One box, many shapes: classify the raw text, search the local index, and
+    // fan out to every configured web provider (DuckDuckGo / Brave / …) so
+    // results are open-web-wide — not limited to indexed pages. Domain / IP /
+    // plate / calculation cards still attach alongside the result list. With
+    // `tor=true`, clearnet search is skipped and results come only from onion /
+    // Tor-directory sources. Pass `web=off` for local-index-only.
     app.get('/query', async (request): Promise<UniversalQueryResponse> => {
       const query = universalQuerySchema.parse(request.query);
       if (query.tor) {

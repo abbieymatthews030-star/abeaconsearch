@@ -375,33 +375,15 @@ describe('runUniversalSearch', () => {
     expect(oldest.results.map((hit) => hit.id)).toEqual(['older-doc', 'newer-doc']);
   });
 
-  it('forces a web search for a general query that already has local hits', async () => {
+  it('searches the web for a general query that already has local hits', async () => {
     const engine = new SearchEngine();
     miniSearchDoc(engine);
     let calls = 0;
-    const skipped = await runUniversalSearch({
+    const live = await runUniversalSearch({
       query: 'minisearch ranking',
       search: searchQuery('minisearch ranking'),
       engine,
       config,
-      backends: [
-        backend('DuckDuckGo', async () => {
-          calls += 1;
-          return [];
-        }),
-      ],
-    });
-    expect(calls).toBe(0);
-    expect(skipped.diagnostics.some((item) => item.detail === 'local results were relevant')).toBe(
-      true,
-    );
-
-    const forced = await runUniversalSearch({
-      query: 'minisearch ranking',
-      search: searchQuery('minisearch ranking'),
-      engine,
-      config,
-      web: 'force',
       backends: [
         backend('DuckDuckGo', async () => {
           calls += 1;
@@ -416,7 +398,33 @@ describe('runUniversalSearch', () => {
       ],
     });
     expect(calls).toBeGreaterThan(0);
-    expect(forced.results.some((hit) => hit.origin === 'web')).toBe(true);
+    expect(live.results.some((hit) => hit.origin === 'web')).toBe(true);
+
+    calls = 0;
+    const off = await runUniversalSearch({
+      query: 'minisearch ranking',
+      search: searchQuery('minisearch ranking'),
+      engine,
+      config,
+      web: 'off',
+      backends: [
+        backend('DuckDuckGo', async () => {
+          calls += 1;
+          return [
+            {
+              title: 'MiniSearch ranking',
+              url: 'https://example.com/minisearch-ranking',
+              snippet: 'MiniSearch ranking on the web.',
+            },
+          ];
+        }),
+      ],
+    });
+    expect(calls).toBe(0);
+    expect(off.diagnostics.some((item) => item.detail === 'web search disabled for this request')).toBe(
+      true,
+    );
+    expect(off.results.every((hit) => hit.origin === 'index')).toBe(true);
   });
 
   it('does not treat matthews as a fuzzy match for matches', () => {

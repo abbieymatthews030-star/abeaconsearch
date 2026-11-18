@@ -68,6 +68,11 @@ Optional env vars (also set by the public `.env` example):
 | `BEACON_SITE_URL`  | Canonical `https://…` origin reported by `/api/health` and shown in the UI |
 | `BEACON_SITE_NAME` | Product name (default `Beacon Search`)                                     |
 
+Beacon is **not** meant to be indexed by Google / Bing / etc. The UI meta tags,
+`robots.txt`, Caddy `X-Robots-Tag`, and the app itself all send `noindex`.
+Users still get full open-web results inside Beacon; other crawlers are asked
+not to list the Beacon site.
+
 ## 5. Update and back up
 
 ```sh

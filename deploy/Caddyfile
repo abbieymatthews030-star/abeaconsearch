@@ -11,6 +11,7 @@
         X-Frame-Options DENY
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
         Strict-Transport-Security "max-age=31536000"
+        X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
         -Server
     }
 
