@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { writeJsonAtomic } from './fs-atomic.js';
 import type { Logger } from './logger.js';
 import { SearchEngine } from './search-engine.js';
 import type { BeaconDocument, IndexSnapshot } from './types.js';
@@ -103,10 +104,7 @@ export class PersistentEngine extends SearchEngine {
   }
 
   private async writeSnapshot(snapshot: IndexSnapshot): Promise<void> {
-    await mkdir(path.dirname(this.indexFile), { recursive: true });
-    const tmp = `${this.indexFile}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify(snapshot, null, 2), 'utf8');
-    await rename(tmp, this.indexFile);
+    await writeJsonAtomic(this.indexFile, snapshot);
     this.lastPersistedAt = snapshot.savedAt;
     this.logger?.debug(
       { indexFile: this.indexFile, documents: snapshot.documents.length },

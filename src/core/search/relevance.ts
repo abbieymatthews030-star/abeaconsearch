@@ -1,92 +1,7 @@
+import { STOPWORDS } from '../stopwords.js';
 import type { BeaconDocument } from '../types.js';
 import { tokenize } from '../text.js';
 import type { SearchIntent } from './types.js';
-
-/**
- * Function words. Duplicated here (rather than imported from the answer
- * extractor) so the search path does not cycle through retrieval.
- */
-const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'but',
-  'of',
-  'to',
-  'in',
-  'on',
-  'at',
-  'for',
-  'is',
-  'are',
-  'was',
-  'were',
-  'be',
-  'been',
-  'being',
-  'it',
-  'its',
-  'this',
-  'that',
-  'these',
-  'those',
-  'as',
-  'by',
-  'with',
-  'from',
-  'into',
-  'about',
-  'which',
-  'who',
-  'whom',
-  'whose',
-  'what',
-  'when',
-  'where',
-  'why',
-  'how',
-  'can',
-  'could',
-  'do',
-  'does',
-  'did',
-  'has',
-  'have',
-  'had',
-  'will',
-  'would',
-  'should',
-  'may',
-  'might',
-  'must',
-  'not',
-  'no',
-  'yes',
-  'i',
-  'you',
-  'he',
-  'she',
-  'they',
-  'we',
-  'me',
-  'my',
-  'your',
-  'his',
-  'her',
-  'their',
-  'our',
-  'so',
-  'if',
-  'then',
-  'than',
-  'there',
-  'here',
-  'out',
-  'up',
-  'down',
-]);
 
 const ENGINE_HELP_RE = /minisearch|beacon search/i;
 const TRACKING_PARAMS = [
@@ -201,12 +116,17 @@ export function assessLocalHit(
   return { ok: coverage >= 0.5, coverage, helpFactor };
 }
 
-export function isRelevantLocalHit(
-  query: string,
-  doc: Pick<BeaconDocument, 'title' | 'body' | 'tags'>,
-  options: { fuzzy: boolean; prefix: boolean; intent: SearchIntent },
-): boolean {
-  return assessLocalHit(query, doc, options).ok;
+/** Strip common cross-site tracking params from a URL for display/citation. */
+export function stripTrackingParams(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.some((re) => re.test(key))) u.searchParams.delete(key);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 export function canonicalUrl(url: string): string {

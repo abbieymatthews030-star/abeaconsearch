@@ -117,18 +117,33 @@ const BASE = import.meta.env.VITE_API_BASE ?? '';
 
 function errorMessage(payload: unknown, status: number): string {
   if (!payload || typeof payload !== 'object') return `Request failed with ${status}`;
-  const body = payload as { message?: unknown; issues?: unknown };
-  const message = typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
-  if (!Array.isArray(body.issues) || body.issues.length === 0) return message;
-  const parts = body.issues
-    .map((issue) => {
-      if (!issue || typeof issue !== 'object') return '';
+  const body = payload as {
+    message?: unknown;
+    issues?: unknown;
+    errors?: unknown;
+    error?: unknown;
+  };
+  const code = typeof body.error === 'string' ? body.error : '';
+  const base =
+    typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
+  const message = code === 'rate_limited' ? `${base} (rate limited)` : base;
+
+  const parts: string[] = [];
+  if (Array.isArray(body.issues)) {
+    for (const issue of body.issues) {
+      if (!issue || typeof issue !== 'object') continue;
       const row = issue as { path?: unknown; message?: unknown };
       const path = typeof row.path === 'string' && row.path ? row.path : '';
       const detail = typeof row.message === 'string' ? row.message : '';
-      return [path, detail].filter(Boolean).join(': ');
-    })
-    .filter(Boolean);
+      const part = [path, detail].filter(Boolean).join(': ');
+      if (part) parts.push(part);
+    }
+  }
+  if (body.errors && typeof body.errors === 'object' && !Array.isArray(body.errors)) {
+    for (const [key, value] of Object.entries(body.errors as Record<string, unknown>)) {
+      if (typeof value === 'string' && value) parts.push(`${key}: ${value}`);
+    }
+  }
   return parts.length > 0 ? `${message} ${parts.join('; ')}` : message;
 }
 
@@ -160,7 +175,7 @@ export interface SearchParams {
   fuzzy?: boolean;
   /** Prefix matching. Default true. Send false to require whole tokens. */
   prefix?: boolean;
-  /** `force` runs web search even when the local index already matched. */
+  /** `force` always searches the web; `off` never does. Omit for auto. */
   web?: 'force' | 'off';
 }
 
@@ -194,8 +209,9 @@ export const api = {
     appendCommonParams(qs, params);
     return request<UniversalQueryResponse>(`/api/query?${qs.toString()}`, { signal });
   },
-  suggest(q: string, signal?: AbortSignal): Promise<SuggestResponse> {
+  suggest(q: string, signal?: AbortSignal, limit?: number): Promise<SuggestResponse> {
     const qs = new URLSearchParams({ q });
+    if (limit !== undefined) qs.set('limit', String(limit));
     return request<SuggestResponse>(`/api/suggest?${qs.toString()}`, { signal });
   },
   stats(): Promise<IndexStats> {
@@ -283,6 +299,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(params),
     });
+  },
+  checkPlateGet(
+    plate: string,
+    params: {
+      vehicle?: boolean;
+      mot?: boolean;
+      index?: boolean;
+      referenceDate?: string;
+    } = {},
+    signal?: AbortSignal,
+  ): Promise<PlateCheck> {
+    const qs = new URLSearchParams();
+    if (params.vehicle !== undefined) qs.set('vehicle', String(params.vehicle));
+    if (params.mot !== undefined) qs.set('mot', String(params.mot));
+    if (params.index !== undefined) qs.set('index', String(params.index));
+    if (params.referenceDate) qs.set('referenceDate', params.referenceDate);
+    const query = qs.toString();
+    return request<PlateCheck>(
+      `/api/plate/${encodeURIComponent(plate)}${query ? `?${query}` : ''}`,
+      { signal },
+    );
   },
   settings(): Promise<{ settings: SettingsEntry[] }> {
     return request('/api/settings');

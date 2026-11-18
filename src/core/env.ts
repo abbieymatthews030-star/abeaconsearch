@@ -15,7 +15,12 @@ export function loadDotEnv(cwd: string = process.cwd()): void {
   try {
     const loader = (process as NodeJS.Process & { loadEnvFile?: (p: string) => void }).loadEnvFile;
     if (typeof loader === 'function') loader(file);
-  } catch {
-    /* ignore malformed .env — defaults still apply */
+  } catch (error) {
+    // Defaults still apply, but operators should know their env file was skipped.
+    process.stderr.write(
+      `[beacon] failed to load env file ${file}: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
   }
 }

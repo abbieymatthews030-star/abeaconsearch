@@ -1,12 +1,11 @@
+import { isIP } from 'node:net';
+import { CALCULATION_RE, DOMAIN_RE, PLATE_RE } from '../query-patterns.js';
 import { isFunctionWord } from './relevance.js';
 import type { SearchAction, SearchIntent } from './types.js';
 
-const DOMAIN_RE = /^(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/i;
-const CALCULATION_RE = /^[-+]?[\d\s().]+(?:[-+*/^%][-+]?[\d\s().]+)+$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[\d(][\d\s().-]{6,}\d$/;
 const USERNAME_RE = /^[@/][A-Za-z0-9._-]{2,32}$/;
-const PLATE_RE = /^plate\s+\S+/i;
 const QUESTION_RE =
   /^(who|what|whats|when|where|why|how|is|are|was|were|does|do|did|can|could|should|would|will|which|whom|whose|define|explain|tell)\b/i;
 const COMPANY_RE = /\b(inc|llc|ltd|gmbh|corp|corporation|company|plc|limited)\b\.?$/i;
@@ -71,17 +70,6 @@ export function stripQuotes(query: string): string {
     .trim();
 }
 
-function isIpAddress(value: string): boolean {
-  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
-    return value.split('.').every((part) => {
-      const n = Number(part);
-      return Number.isInteger(n) && n >= 0 && n <= 255;
-    });
-  }
-  const colons = value.match(/:/g)?.length ?? 0;
-  return colons >= 2 && /^[0-9a-f:]+$/i.test(value);
-}
-
 function looksLikePerson(query: string): boolean {
   const words = stripQuotes(query).split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 4) return false;
@@ -100,7 +88,7 @@ export function detectIntent(raw: string): SearchIntent {
   if (EMAIL_RE.test(q)) return 'email';
   if (PHONE_RE.test(q)) return 'phone';
   if (USERNAME_RE.test(q)) return 'username';
-  if (isIpAddress(q)) return 'ip';
+  if (isIP(q)) return 'ip';
   if (DOMAIN_RE.test(q)) return 'domain';
   if (CALCULATION_RE.test(q)) return 'calculation';
   if (COMPANY_RE.test(q)) return 'company';

@@ -1,3 +1,4 @@
+import { DEFAULT_PLATE_TIMEOUT_MS } from '../../config.js';
 import { fetchWithTimeout } from '../../http.js';
 import type { MotSummary, MotTest } from '../types.js';
 import type { MotProvider, ProviderResult } from './types.js';
@@ -59,7 +60,7 @@ export class MotHistoryProvider implements MotProvider {
       tokenUrl: config.tokenUrl?.trim() ?? '',
       scope: config.scope?.trim() || DEFAULT_SCOPE,
       baseUrl: config.baseUrl?.trim() || DEFAULT_BASE_URL,
-      timeoutMs: config.timeoutMs ?? 12_000,
+      timeoutMs: config.timeoutMs ?? DEFAULT_PLATE_TIMEOUT_MS,
       fetchImpl: config.fetchImpl ?? fetch,
     };
   }

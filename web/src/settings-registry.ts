@@ -108,7 +108,7 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     defaultValue: false,
   },
   {
-    id: 'queryExpansion',
+    id: 'allowPartialMatch',
     section: 'search',
     label: 'Query expansion',
     description:
@@ -118,7 +118,7 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     defaultValue: true,
   },
   {
-    id: 'typoCorrection',
+    id: 'fuzzy',
     section: 'search',
     label: 'Typo correction',
     description: 'Allow fuzzy matching for close misspellings.',
@@ -127,7 +127,7 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     defaultValue: true,
   },
   {
-    id: 'prefixMatch',
+    id: 'prefix',
     section: 'search',
     label: 'Match word prefixes',
     description:
@@ -135,6 +135,21 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     type: 'toggle',
     scope: 'client',
     defaultValue: true,
+  },
+  {
+    id: 'webMode',
+    section: 'search',
+    label: 'Web search',
+    description:
+      'Auto lets Beacon decide when to search the web. Off never searches the web. Force always does.',
+    type: 'select',
+    scope: 'client',
+    defaultValue: 'auto',
+    options: [
+      { value: 'auto', label: 'Auto' },
+      { value: 'off', label: 'Off' },
+      { value: 'force', label: 'Force' },
+    ],
   },
   {
     id: 'citationsVisible',
@@ -189,6 +204,7 @@ export interface ServerSettingEntry {
   min?: number;
   max?: number;
   value: boolean | number | string;
+  isDefault?: boolean;
 }
 
 /** Preferred-model choices built from the providers `/health` says are configured. */

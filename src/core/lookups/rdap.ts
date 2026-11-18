@@ -1,3 +1,4 @@
+import { DEFAULT_USER_AGENT } from '../config.js';
 import { fetchWithTimeout } from '../http.js';
 
 /**
@@ -22,14 +23,12 @@ export interface RdapResponse {
 // Cloudflare sits in front of rdap.org and 403s requests with no/blank
 // User-Agent (Node's fetch sends one Cloudflare treats as a bot) — a normal
 // UA string is enough to pass.
-const RDAP_USER_AGENT = 'BeaconSearchBot/1.0 (+https://github.com/abbieymatthews030-star/abeaconsearch)';
-
 /** Fetch an RDAP object (e.g. `domain/example.com`, `ip/203.0.113.1`). Never throws. */
 export async function fetchRdap(path: string, timeoutMs: number): Promise<RdapResponse | null> {
   try {
     const response = await fetchWithTimeout(`https://rdap.org/${path}`, {
       timeoutMs,
-      headers: { accept: 'application/rdap+json', 'user-agent': RDAP_USER_AGENT },
+      headers: { accept: 'application/rdap+json', 'user-agent': DEFAULT_USER_AGENT },
     });
     if (!response.ok) return null;
     return (await response.json()) as RdapResponse;

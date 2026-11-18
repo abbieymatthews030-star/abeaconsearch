@@ -88,6 +88,15 @@ export interface PlateConfig {
   indexResults: boolean;
 }
 
+/** Default crawler / bot User-Agent. Wikipedia also uses this; DuckDuckGo keeps a browser UA. */
+export const DEFAULT_USER_AGENT =
+  'BeaconSearchBot/1.0 (+https://github.com/abbieymatthews030-star/abeaconsearch)';
+
+/** Default timeouts shared by lookups / HTTP helpers when callers omit one. */
+export const DEFAULT_LOOKUP_TIMEOUT_MS = 8_000;
+export const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
+export const DEFAULT_PLATE_TIMEOUT_MS = 12_000;
+
 function readInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -165,13 +174,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     logPretty: readBool('BEACON_LOG_PRETTY', nodeEnv === 'development'),
     corsOrigin: readString('BEACON_CORS_ORIGIN', '') || true,
     persistDebounceMs: readInt('BEACON_PERSIST_DEBOUNCE_MS', 750),
-    crawlUserAgent: readString(
-      'BEACON_CRAWL_USER_AGENT',
-      'BeaconSearchBot/1.0 (+https://github.com/abbieymatthews030-star/abeaconsearch)',
-    ),
+    crawlUserAgent: readString('BEACON_CRAWL_USER_AGENT', DEFAULT_USER_AGENT),
     crawlMaxPages: readInt('BEACON_CRAWL_MAX_PAGES', 50),
     crawlConcurrency: readInt('BEACON_CRAWL_CONCURRENCY', 4),
-    crawlTimeoutMs: readInt('BEACON_CRAWL_TIMEOUT_MS', 15_000),
+    crawlTimeoutMs: readInt('BEACON_CRAWL_TIMEOUT_MS', DEFAULT_HTTP_TIMEOUT_MS),
     crawlDelayMs: readInt('BEACON_CRAWL_DELAY_MS', 150),
     crawlAllowPrivateHosts: readBool('BEACON_CRAWL_ALLOW_PRIVATE', false),
     maxBodyBytes: readInt('BEACON_MAX_BODY_BYTES', 8 * 1024 * 1024),
@@ -184,14 +190,14 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       motTokenUrl: readOptional('MOT_TOKEN_URL'),
       motScope: readOptional('MOT_SCOPE'),
       motBaseUrl: readOptional('MOT_BASE_URL'),
-      timeoutMs: readInt('BEACON_PLATE_TIMEOUT_MS', 12_000),
+      timeoutMs: readInt('BEACON_PLATE_TIMEOUT_MS', DEFAULT_PLATE_TIMEOUT_MS),
       indexResults: readBool('BEACON_PLATE_INDEX_RESULTS', false),
     },
     answer: {
       enabled: readBool('BEACON_ANSWER_ENABLED', true),
       autoAnswer: readBool('BEACON_ANSWER_AUTO', true),
       anthropicApiKey: readOptional('ANTHROPIC_API_KEY'),
-      anthropicModel: readString('BEACON_ANSWER_ANTHROPIC_MODEL', 'claude-opus-5'),
+      anthropicModel: readOptional('ANSWER_ANTHROPIC_MODEL') ?? 'claude-opus-5',
       openaiApiKey: readOptional('OPENAI_API_KEY'),
       openaiBaseUrl:
         readOptional('OPENAI_BASE_URL') ??
@@ -203,7 +209,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       tavilyApiKey: readOptional('TAVILY_API_KEY'),
       searxngUrl: readOptional('SEARXNG_URL'),
       maxSources: readInt('BEACON_ANSWER_MAX_SOURCES', 8),
-      fetchTimeoutMs: readInt('BEACON_ANSWER_FETCH_TIMEOUT_MS', 8_000),
+      fetchTimeoutMs: readInt('BEACON_ANSWER_FETCH_TIMEOUT_MS', DEFAULT_LOOKUP_TIMEOUT_MS),
       llmTimeoutMs: readInt('BEACON_ANSWER_LLM_TIMEOUT_MS', 30_000),
       trustedDomains: readList('ANSWER_TRUSTED_DOMAINS'),
       allowPrivateHosts: readBool('BEACON_ANSWER_ALLOW_PRIVATE', false),
@@ -219,7 +225,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     },
     lookups: {
       enabled: readBool('BEACON_LOOKUPS_ENABLED', true),
-      timeoutMs: readInt('BEACON_LOOKUPS_TIMEOUT_MS', 8_000),
+      timeoutMs: readInt('BEACON_LOOKUPS_TIMEOUT_MS', DEFAULT_LOOKUP_TIMEOUT_MS),
     },
     rateLimit: {
       max: readInt('BEACON_RATE_LIMIT_MAX', 200),

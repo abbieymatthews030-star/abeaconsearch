@@ -11,6 +11,7 @@ import { plateCheckToDocument } from '../core/plate/index.js';
 import { ProbeCache, listProviders, testProvider } from '../core/providers.js';
 import {
   classifyQuery,
+  type ClassifiedQuery,
   type PrimaryResult,
   type UniversalQueryResponse,
 } from '../core/query-router.js';
@@ -18,6 +19,7 @@ import { runUniversalSearch } from '../core/search/orchestrator.js';
 import type { RuntimeSettingsStore } from '../core/runtime-settings.js';
 import type { PersistentEngine } from '../core/store.js';
 import {
+  FALSEY,
   answerQuerySchema,
   booleanParam,
   bulkInputSchema,
@@ -39,6 +41,8 @@ const plateCheckBodySchema = plateCheckQuerySchema.extend({
   plate: z.string().min(1).max(16),
 });
 
+const idParam = z.object({ id: z.string().min(1) });
+
 export interface RouteContext {
   config: Config;
   engine: PersistentEngine;
@@ -51,13 +55,17 @@ export interface RouteContext {
 export function healthPayload(
   ctx: Pick<RouteContext, 'engine' | 'plateChecker' | 'answerService' | 'config'>,
 ) {
+  const answerCaps = ctx.answerService?.capabilities;
   return {
     status: 'ok' as const,
     documents: ctx.engine.size,
     uptimeSeconds: Math.round(process.uptime()),
     plateChecks: ctx.plateChecker.capabilities,
-    answer: ctx.answerService
-      ? ctx.answerService.capabilities
+    answer: answerCaps
+      ? {
+          ...answerCaps,
+          enabled: Boolean(ctx.config.answer.enabled && answerCaps.enabled),
+        }
       : { enabled: false as const, autoAnswer: false, webSearch: null, llm: [] as string[] },
     lookups: { enabled: ctx.config.lookups.enabled },
   };
@@ -70,6 +78,15 @@ class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+function hasHttpStatus(error: unknown): error is { statusCode: number; message?: string; validation?: unknown } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'statusCode' in error &&
+    typeof (error as { statusCode: unknown }).statusCode === 'number'
+  );
 }
 
 export function registerErrorHandler(app: FastifyInstance): void {
@@ -94,15 +111,69 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .send({ error: codeFor(error.statusCode), message: error.message });
       return;
     }
-    const err = error as { statusCode?: number; message?: string; validation?: unknown };
-    if (err.validation || (typeof err.statusCode === 'number' && err.statusCode < 500)) {
-      const status = err.statusCode ?? 400;
-      reply.status(status).send({ error: codeFor(status), message: err.message ?? 'Bad request' });
+    if (hasHttpStatus(error) && (error.validation || error.statusCode < 500)) {
+      const status = error.statusCode ?? 400;
+      reply.status(status).send({ error: codeFor(status), message: error.message ?? 'Bad request' });
       return;
     }
     request.log.error({ err: error }, 'unhandled error');
     reply.status(500).send({ error: 'internal_error', message: 'Something went wrong.' });
   });
+}
+
+async function resolvePrimary(
+  classified: ClassifiedQuery,
+  config: Config,
+  plateChecker: PlateChecker,
+  engine: PersistentEngine,
+): Promise<PrimaryResult | null> {
+  switch (classified.kind) {
+    case 'domain':
+      return config.lookups.enabled
+        ? {
+            kind: 'domain',
+            domain: classified.value,
+            enabled: true,
+            data: await lookupDomain(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+          }
+        : { kind: 'domain', domain: classified.value, enabled: false };
+    case 'ip':
+      return config.lookups.enabled
+        ? {
+            kind: 'ip',
+            ip: classified.value,
+            enabled: true,
+            data: await lookupIp(classified.value, { timeoutMs: config.lookups.timeoutMs }),
+          }
+        : { kind: 'ip', ip: classified.value, enabled: false };
+    case 'calculation':
+      try {
+        return {
+          kind: 'calculation',
+          expression: classified.value,
+          result: evaluateExpression(classified.value),
+        };
+      } catch (err) {
+        return {
+          kind: 'calculation',
+          expression: classified.value,
+          error: err instanceof CalculationError ? err.message : 'could not evaluate',
+        };
+      }
+    case 'plate': {
+      const data = await plateChecker.check(classified.value, {
+        includeVehicleData: true,
+        includeMotHistory: true,
+      });
+      if (config.plate.indexResults) {
+        engine.upsert(plateCheckToDocument(data));
+        await engine.flush();
+      }
+      return { kind: 'plate', data };
+    }
+    default:
+      return null;
+  }
 }
 
 export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
@@ -126,7 +197,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
         if (typeof v === 'boolean') return v ? 'auto' : 'off';
         const s = v.trim().toLowerCase();
         if (s === 'force') return 'force';
-        if (s === 'false' || s === '0' || s === 'no' || s === 'off' || s === '') return 'off';
+        if (FALSEY.has(s)) return 'off';
         return 'auto';
       });
 
@@ -143,54 +214,6 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       const query = universalQuerySchema.parse(request.query);
       const classified = classifyQuery(query.q);
 
-      const primaryPromise: Promise<PrimaryResult | null> = (async () => {
-        if (classified.kind === 'domain') {
-          return config.lookups.enabled
-            ? {
-                kind: 'domain' as const,
-                domain: classified.value,
-                enabled: true,
-                data: await lookupDomain(classified.value, { timeoutMs: config.lookups.timeoutMs }),
-              }
-            : { kind: 'domain' as const, domain: classified.value, enabled: false };
-        }
-        if (classified.kind === 'ip') {
-          return config.lookups.enabled
-            ? {
-                kind: 'ip' as const,
-                ip: classified.value,
-                enabled: true,
-                data: await lookupIp(classified.value, { timeoutMs: config.lookups.timeoutMs }),
-              }
-            : { kind: 'ip' as const, ip: classified.value, enabled: false };
-        }
-        if (classified.kind === 'calculation') {
-          try {
-            return {
-              kind: 'calculation' as const,
-              expression: classified.value,
-              result: evaluateExpression(classified.value),
-            };
-          } catch (err) {
-            return {
-              kind: 'calculation' as const,
-              expression: classified.value,
-              error: err instanceof CalculationError ? err.message : 'could not evaluate',
-            };
-          }
-        }
-        if (classified.kind === 'plate') {
-          return {
-            kind: 'plate' as const,
-            data: await plateChecker.check(classified.value, {
-              includeVehicleData: true,
-              includeMotHistory: true,
-            }),
-          };
-        }
-        return null;
-      })();
-
       const [envelope, primary] = await Promise.all([
         runUniversalSearch({
           query: query.q,
@@ -199,7 +222,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
           config: config.answer,
           web: query.web,
         }),
-        primaryPromise,
+        resolvePrimary(classified, config, plateChecker, engine),
       ]);
 
       return { ...envelope, kind: classified.kind, primary };
@@ -228,7 +251,17 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     app.patch('/settings', async (request, reply) => {
       const patch = settingsPatchSchema.parse(request.body);
       const { applied, errors } = await ctx.settings.update(patch);
-      if (applied.length === 0 && Object.keys(errors).length > 0) reply.status(400);
+      const errorIds = Object.keys(errors);
+      if (applied.length === 0 && errorIds.length > 0) {
+        reply.status(400);
+        return {
+          error: 'validation_error',
+          message: `Could not apply settings: ${errorIds.map((id) => `${id}: ${errors[id]}`).join('; ')}`,
+          applied,
+          errors,
+          settings: ctx.settings.list(),
+        };
+      }
       return { applied, errors, settings: ctx.settings.list() };
     });
 
@@ -247,7 +280,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     app.get('/providers', async () => ({ providers: listProviders(providerDeps, probeCache) }));
 
     app.post('/providers/:id/test', async (request) => {
-      const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+      const { id } = idParam.parse(request.params);
       const current = listProviders(providerDeps, probeCache).find((p) => p.id === id);
       if (!current) throw new HttpError(404, `Unknown provider "${id}"`);
       if (!current.testable) throw new HttpError(400, `"${id}" has nothing to test`);
@@ -288,7 +321,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     });
 
     app.get('/documents/:id', async (request) => {
-      const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+      const { id } = idParam.parse(request.params);
       const doc = engine.get(id);
       if (!doc) throw new HttpError(404, `No document with id "${id}"`);
       return doc;
@@ -303,13 +336,13 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     });
 
     app.put('/documents/:id', async (request) => {
-      const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
-      const input = documentInputSchema.parse({ ...(request.body as object), id });
-      return engine.upsert(input);
+      const { id } = idParam.parse(request.params);
+      const body = documentInputSchema.omit({ id: true }).parse(request.body);
+      return engine.upsert({ ...body, id });
     });
 
     app.delete('/documents/:id', async (request, reply) => {
-      const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+      const { id } = idParam.parse(request.params);
       if (!engine.remove(id)) throw new HttpError(404, `No document with id "${id}"`);
       reply.status(204);
       return null;

@@ -13,7 +13,12 @@ import { evaluateSource, stripLeadingNavList, type SourceEvidence } from './evid
 import type { WebSearchProvider } from './providers/web-search.js';
 import { fanOutWebSearch, type WebBackend } from '../search/fanout.js';
 import { detectIntent } from '../search/intent.js';
-import { isRelevantLocalHit } from '../search/relevance.js';
+import {
+  assessLocalHit,
+  canonicalUrl,
+  domainOf,
+  stripTrackingParams,
+} from '../search/relevance.js';
 
 /** A source gathered for answering, with its full body text for extraction. */
 export interface RetrievedSource extends SourceEvidence {
@@ -66,46 +71,6 @@ const TRUST_ORDER: Record<TrustTier, number> = {
   unverified: 3,
 };
 
-function canonicalUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    u.hash = '';
-    u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
-    const path = u.pathname.replace(/\/+$/, '');
-    return `${u.protocol}//${u.hostname}${path}${u.search}`;
-  } catch {
-    return url;
-  }
-}
-
-// Common cross-site tracking params worth stripping from a URL before it's
-// shown or cited — marketing UTM tags and the per-vendor click-id params.
-const TRACKING_PARAMS = [
-  /^utm_/i,
-  /^(fbclid|gclid|msclkid|dclid|twclid|igshid|mc_eid|mc_cid|yclid|_ga|_gl)$/i,
-];
-
-function stripTrackingParams(url: string): string {
-  try {
-    const u = new URL(url);
-    for (const key of [...u.searchParams.keys()]) {
-      if (TRACKING_PARAMS.some((re) => re.test(key))) u.searchParams.delete(key);
-    }
-    return u.toString();
-  } catch {
-    return url;
-  }
-}
-
-function domainOf(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return undefined;
-  }
-}
-
 function sourceFromDocument(
   query: string,
   doc: BeaconDocument,
@@ -145,7 +110,7 @@ function fromIndex(query: string, deps: GatherDeps, limit: number): RetrievedSou
   for (const hit of response.hits) {
     const doc = deps.engine.get(hit.id);
     if (!doc) continue;
-    if (!isRelevantLocalHit(query, doc, { fuzzy: true, prefix: true, intent })) continue;
+    if (!assessLocalHit(query, doc, { fuzzy: true, prefix: true, intent }).ok) continue;
     const source = sourceFromDocument(query, doc, deps);
     if (source) out.push(source);
   }

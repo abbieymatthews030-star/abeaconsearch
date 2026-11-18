@@ -1,4 +1,5 @@
 import { reverse } from 'node:dns/promises';
+import { DEFAULT_LOOKUP_TIMEOUT_MS } from '../config.js';
 import { entityWithRole, fetchRdap, vcardField } from './rdap.js';
 
 export interface IpLookup {
@@ -17,7 +18,7 @@ export async function lookupIp(
   ip: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<IpLookup> {
-  const timeoutMs = opts.timeoutMs ?? 8_000;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_LOOKUP_TIMEOUT_MS;
   const notices: string[] = [];
 
   const reverseDns = await reverse(ip).catch(() => {

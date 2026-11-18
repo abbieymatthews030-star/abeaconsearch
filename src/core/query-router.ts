@@ -2,19 +2,16 @@ import { isIP } from 'node:net';
 import type { DomainLookup } from './lookups/domain.js';
 import type { IpLookup } from './lookups/ip.js';
 import type { PlateCheck } from './plate/types.js';
+import { CALCULATION_RE, DOMAIN_RE, PLATE_RE } from './query-patterns.js';
 import type { SearchEnvelope } from './search/types.js';
 
-export type QueryKind = 'domain' | 'ip' | 'calculation' | 'plate' | 'default';
+/** Aligned with SearchIntent's general bucket for the same search-box idea. */
+export type QueryKind = 'domain' | 'ip' | 'calculation' | 'plate' | 'general';
 
 export interface ClassifiedQuery {
   kind: QueryKind;
   value: string;
 }
-
-const DOMAIN_RE = /^(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/i;
-// Whole string is digits/operators/parens only, with at least one operator —
-// a bare number like "2024" is deliberately left as a normal search term.
-const CALCULATION_RE = /^[-+]?[\d\s().]+(?:[-+*/^%][-+]?[\d\s().]+)+$/;
 
 /**
  * Classify a raw search box query so the universal box can route it to the
@@ -25,7 +22,10 @@ export function classifyQuery(raw: string): ClassifiedQuery {
   const q = raw.trim();
 
   const plateMatch = /^plate\s+(\S+)/i.exec(q);
-  if (plateMatch) return { kind: 'plate', value: plateMatch[1] as string };
+  if (plateMatch || PLATE_RE.test(q)) {
+    const value = plateMatch?.[1] ?? q.replace(/^plate\s+/i, '').trim();
+    if (value) return { kind: 'plate', value };
+  }
 
   if (CALCULATION_RE.test(q)) return { kind: 'calculation', value: q };
 
@@ -33,7 +33,7 @@ export function classifyQuery(raw: string): ClassifiedQuery {
 
   if (DOMAIN_RE.test(q)) return { kind: 'domain', value: q.toLowerCase() };
 
-  return { kind: 'default', value: q };
+  return { kind: 'general', value: q };
 }
 
 export interface DomainPrimary {

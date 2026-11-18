@@ -1,8 +1,10 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig, type Config } from './config.js';
+import { writeJsonAtomic } from './fs-atomic.js';
 import type { Logger } from './logger.js';
+import { CRAWL_MAX_PAGES_LIMIT } from './types.js';
 
 export type RuntimeSettingType = 'toggle' | 'number' | 'text';
 
@@ -28,6 +30,21 @@ export interface RuntimeSettingDefinition {
   max?: number;
   get(config: Config): boolean | number | string;
   set(config: Config, value: boolean | number | string): void;
+}
+
+/** Serializable settings row returned by GET /api/settings (no get/set fns). */
+export interface RuntimeSettingEntry {
+  id: string;
+  label: string;
+  description: string;
+  type: RuntimeSettingType;
+  section: 'sources' | 'ai' | 'advanced';
+  advanced: boolean;
+  requiresRestart: boolean;
+  min?: number;
+  max?: number;
+  value: boolean | number | string;
+  isDefault: boolean;
 }
 
 export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
@@ -93,7 +110,7 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
     description: 'Upper bound on pages fetched by a single crawl.',
     type: 'number',
     min: 1,
-    max: 5_000,
+    max: CRAWL_MAX_PAGES_LIMIT,
     section: 'advanced',
     advanced: true,
     requiresRestart: false,
@@ -275,6 +292,32 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
     },
   },
   {
+    id: 'keylessWebSearch',
+    label: 'Keyless web search',
+    description: 'Allow DuckDuckGo and Wikipedia when no Brave/Tavily/SearXNG key is configured.',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.keylessWebSearch,
+    set: (c, v) => {
+      c.answer.keylessWebSearch = Boolean(v);
+    },
+  },
+  {
+    id: 'answerAllowPrivateHosts',
+    label: 'Allow answer fetches to private hosts',
+    description: 'Lets answer synthesis fetch loopback/private URLs. Off is the safe default (SSRF guard).',
+    type: 'toggle',
+    section: 'advanced',
+    advanced: true,
+    requiresRestart: false,
+    get: (c) => c.answer.allowPrivateHosts,
+    set: (c, v) => {
+      c.answer.allowPrivateHosts = Boolean(v);
+    },
+  },
+  {
     id: 'rateLimitMax',
     label: 'Rate limit (requests)',
     description: 'Max requests per IP per window across the whole API. 0 disables it.',
@@ -393,9 +436,17 @@ export class RuntimeSettingsStore {
   }
 
   /** Current effective value + metadata for every registered setting. */
-  list(): Array<RuntimeSettingDefinition & { value: boolean | number | string; isDefault: boolean }> {
+  list(): RuntimeSettingEntry[] {
     return RUNTIME_SETTINGS.map((def) => ({
-      ...def,
+      id: def.id,
+      label: def.label,
+      description: def.description,
+      type: def.type,
+      section: def.section,
+      advanced: def.advanced,
+      requiresRestart: def.requiresRestart,
+      min: def.min,
+      max: def.max,
       value: def.get(this.config),
       isDefault: !(def.id in this.overrides),
     }));
@@ -443,10 +494,7 @@ export class RuntimeSettingsStore {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify(this.overrides, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeJsonAtomic(this.file, this.overrides);
     this.logger?.debug({ file: this.file }, 'settings overlay persisted');
   }
 }

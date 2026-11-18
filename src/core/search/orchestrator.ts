@@ -1,6 +1,7 @@
 import { describeWebProviders } from '../answer/providers/web-search.js';
 import type { AnswerConfig } from '../config.js';
 import { highlight, makeSnippet } from '../text.js';
+import { roundMs } from '../timing.js';
 import type { BeaconDocument, SearchQuery, SearchResponse } from '../types.js';
 import type { WebBackend } from './fanout.js';
 import { fanOutWebSearch } from './fanout.js';
@@ -40,8 +41,6 @@ export interface RunSearchOptions {
    * local index already matched a general query.
    */
   web?: WebMode;
-  /** @deprecated Prefer `web: 'off'`. Kept so existing callers still compile. */
-  includeWeb?: boolean;
   /** Test override. When set, these backends are used instead of the configured providers. */
   backends?: WebBackend[];
   signal?: AbortSignal;
@@ -67,10 +66,15 @@ const WEB_INTENTS = new Set([
   'general',
 ]);
 
+const LOCAL_CANDIDATE_CAP = 80;
+const LOCAL_CANDIDATE_BUFFER = 40;
+const WEB_MIN_LIMIT = 8;
+const SNIPPET_MAX_CHARS = 320;
+const BODY_SCORE_SLICE = 400;
+const SUMMARY_MIN_BODY_CHARS = 40;
+
 function webModeOf(options: RunSearchOptions): WebMode {
-  if (options.web) return options.web;
-  if (options.includeWeb === false) return 'off';
-  return 'auto';
+  return options.web ?? 'auto';
 }
 
 /** Tag filters are AND, matching the local engine. Source matches the chip label (`provider`). */
@@ -114,7 +118,7 @@ function indexHits(
 ): { ranked: Ranked[]; raw: SearchResponse } {
   const wide = engine.search({
     ...search,
-    limit: Math.min(80, search.limit + search.offset + 40),
+    limit: Math.min(LOCAL_CANDIDATE_CAP, search.limit + search.offset + LOCAL_CANDIDATE_BUFFER),
     offset: 0,
   });
   const ranked: Ranked[] = [];
@@ -141,7 +145,7 @@ function indexHits(
         score: scoreMatch(
           search.q,
           doc.title,
-          plainSnippet || doc.body.slice(0, 400),
+          plainSnippet || doc.body.slice(0, BODY_SCORE_SLICE),
           domain,
           assessment.helpFactor,
         ),
@@ -150,7 +154,7 @@ function indexHits(
       },
       plainTitle: doc.title,
       domain,
-      summaryReady: assessment.coverage >= 1 && doc.body.trim().length > 40,
+      summaryReady: assessment.coverage >= 1 && doc.body.trim().length > SUMMARY_MIN_BODY_CHARS,
     });
   }
   return { ranked, raw: wide };
@@ -265,7 +269,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       local,
       results,
       total: local.total,
-      tookMs: Number((performance.now() - started).toFixed(1)),
+      tookMs: roundMs(started),
       attempted: ['Local index'],
       queriesTried: [],
       diagnostics: [
@@ -301,7 +305,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
         backends: specs,
         query,
         intent,
-        limit: Math.max(options.search.limit, 8),
+        limit: Math.max(options.search.limit, WEB_MIN_LIMIT),
         signal: options.signal,
         filter: 'strict',
       })
@@ -335,7 +339,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
         id: `web:${canonicalUrl(result.url)}`,
         title: highlight(result.title, tokens),
         url: result.url,
-        snippet: highlight(snippet.slice(0, 320), tokens),
+        snippet: highlight(snippet.slice(0, SNIPPET_MAX_CHARS), tokens),
         domain,
         origin: 'web' as const,
         provider: result.provider,
@@ -382,19 +386,15 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   return {
     query: query.trim(),
     intent,
-    outcome: query.trim()
-      ? outcomeFor(merged.length, diagnostics)
-      : merged.length > 0
-        ? 'results'
-        : 'empty',
+    outcome: outcomeFor(merged.length, diagnostics),
     synthesis: synthesisFor(query, merged),
     local,
     results: page.map((item) => item.hit),
     total: merged.length,
-    tookMs: Number((performance.now() - started).toFixed(1)),
+    tookMs: roundMs(started),
     attempted,
     queriesTried: fan.queriesTried,
     diagnostics,
-    actions: query.trim() ? buildSearchActions(query, intent) : [],
+    actions: buildSearchActions(query, intent),
   };
 }

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from '../core/config.js';
 import { loadDotEnv } from '../core/env.js';
+import { createPlateChecker } from '../core/plate/index.js';
 import { buildMcpServer } from './server.js';
 
 loadDotEnv();
@@ -20,11 +21,12 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
+  const caps = createPlateChecker(config).capabilities;
   // stderr is safe for logs on a stdio MCP server; stdout carries the protocol.
   process.stderr.write(
     `beacon-search MCP server ready (plate providers: ` +
-      `VES ${config.plate.dvlaVesApiKey ? 'on' : 'off'}, ` +
-      `MOT ${config.plate.motApiKey ? 'on' : 'off'}; beacon API ${beaconApiUrl})\n`,
+      `VES ${caps.vehicleData ? 'on' : 'off'}, ` +
+      `MOT ${caps.motHistory ? 'on' : 'off'}; beacon API ${beaconApiUrl})\n`,
   );
 
   const shutdown = () => {

@@ -105,12 +105,12 @@ const TRUST_LABEL: Record<TrustTier, string> = {
   unverified: 'unverified',
 };
 
-const KIND_LABEL: Record<QueryKind, string> = {
+const KIND_LABEL: Record<string, string> = {
   domain: 'domain',
   ip: 'ip address',
   calculation: 'calculation',
   plate: 'plate check',
-  default: 'search',
+  general: 'search',
 };
 
 /** ASCII-style radial dot burst — the "beacon". Pure SVG, inherits color. */
@@ -417,9 +417,11 @@ function SearchView({
   const resultsPerPage = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
   const openInNewTab = clientSettings.values.openInNewTab !== false;
   const searchMode = String(clientSettings.values.searchMode ?? 'balanced');
-  const typoCorrection = clientSettings.values.typoCorrection !== false;
-  const queryExpansion = clientSettings.values.queryExpansion !== false;
-  const prefixMatch = clientSettings.values.prefixMatch !== false;
+  const fuzzy = clientSettings.values.fuzzy !== false;
+  const allowPartialMatch = clientSettings.values.allowPartialMatch !== false;
+  const prefix = clientSettings.values.prefix !== false;
+  const webModeRaw = String(clientSettings.values.webMode ?? 'auto');
+  const webMode = webModeRaw === 'off' || webModeRaw === 'force' ? webModeRaw : 'auto';
   const directAnswers = health?.answer.autoAnswer ?? true;
   const citationsVisible = clientSettings.values.citationsVisible !== false;
   const region = clientSettings.values.region;
@@ -521,10 +523,11 @@ function SearchView({
     activeSource,
     sort,
     searchMode,
-    typoCorrection,
-    queryExpansion,
-    prefixMatch,
+    fuzzy,
+    allowPartialMatch,
+    prefix,
     forceWeb,
+    webMode,
   ]);
 
   useEffect(() => {
@@ -532,6 +535,13 @@ function SearchView({
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
+    const webParam: 'force' | 'off' | undefined = forceWeb
+      ? 'force'
+      : webMode === 'force'
+        ? 'force'
+        : webMode === 'off'
+          ? 'off'
+          : undefined;
     api
       .query(
         {
@@ -542,10 +552,10 @@ function SearchView({
           source: activeSource,
           sort,
           combineWith: searchMode === 'precise' ? 'AND' : searchMode === 'broad' ? 'OR' : undefined,
-          allowPartialMatch: searchMode === 'precise' ? false : queryExpansion,
-          fuzzy: typoCorrection,
-          prefix: prefixMatch,
-          web: forceWeb ? 'force' : undefined,
+          allowPartialMatch: searchMode === 'precise' ? false : allowPartialMatch,
+          fuzzy,
+          prefix,
+          web: webParam,
         },
         controller.signal,
       )
@@ -568,11 +578,12 @@ function SearchView({
     sort,
     resultsPerPage,
     searchMode,
-    typoCorrection,
-    queryExpansion,
-    prefixMatch,
+    fuzzy,
+    allowPartialMatch,
+    prefix,
     activeSource,
     forceWeb,
+    webMode,
     retryNonce,
   ]);
 
@@ -580,7 +591,7 @@ function SearchView({
     const q = historyQuery.trim();
     if (!q || q === lastRecordedRef.current) return;
     lastRecordedRef.current = q;
-    onCommit(q, result && result.query === q ? result.kind : 'default');
+    onCommit(q, result && result.query === q ? result.kind : ('general' as QueryKind));
   }, [historyQuery, result, onCommit]);
 
   useEffect(() => {
@@ -1093,7 +1104,8 @@ function DomainCard({ primary }: { primary: DomainPrimary }): JSX.Element {
       </div>
       {!primary.enabled && (
         <p className="notice">
-          Domain lookups are disabled on this server (<code>BEACON_LOOKUPS_ENABLED=false</code>).
+          Domain lookups are disabled. Enable them in Settings → Domain / IP lookups (the{' '}
+          <code>BEACON_LOOKUPS_ENABLED</code> env var only sets the boot default).
         </p>
       )}
       {data && (
@@ -1166,7 +1178,8 @@ function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
       </div>
       {!primary.enabled && (
         <p className="notice">
-          IP lookups are disabled on this server (<code>BEACON_LOOKUPS_ENABLED=false</code>).
+          IP lookups are disabled. Enable them in Settings → Domain / IP lookups (the{' '}
+          <code>BEACON_LOOKUPS_ENABLED</code> env var only sets the boot default).
         </p>
       )}
       {data && (
@@ -1865,7 +1878,7 @@ function ImportView({ onDone }: { onDone: () => void }): JSX.Element {
 
 function CrawlView({ onDone }: { onDone: () => void }): JSX.Element {
   const [url, setUrl] = useState('');
-  const [maxPages, setMaxPages] = useState('25');
+  const [maxPages, setMaxPages] = useState('50');
   const [tags, setTags] = useState('');
   const [sameOriginOnly, setSameOriginOnly] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -2139,6 +2152,23 @@ function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
     setReport(initial);
   }, [initial]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .settings()
+      .then((res) => {
+        if (cancelled) return;
+        const entry = res.settings.find((s) => s.id === 'plateIndexResults');
+        if (typeof entry?.value === 'boolean') setIndex(entry.value);
+      })
+      .catch(() => {
+        /* keep the false default when settings are unavailable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -2179,15 +2209,25 @@ function PlateSearchCard({ initial }: { initial: PlateCheck }): JSX.Element {
   );
 }
 
-function PlateView({ onDone }: { onDone: () => void }): JSX.Element {
+function PlateView({
+  onDone,
+  defaultIndex = false,
+}: {
+  onDone: () => void;
+  defaultIndex?: boolean;
+}): JSX.Element {
   const [input, setInput] = useState('');
   const [vehicle, setVehicle] = useState(true);
   const [mot, setMot] = useState(true);
-  const [index, setIndex] = useState(false);
+  const [index, setIndex] = useState(defaultIndex);
   const [referenceDate, setReferenceDate] = useState('');
   const [report, setReport] = useState<PlateCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setIndex(defaultIndex);
+  }, [defaultIndex]);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -2260,8 +2300,8 @@ function DocsView(): JSX.Element {
         network data, an arithmetic expression is evaluated directly, and{' '}
         <code>plate &lt;reg&gt;</code> runs the number plate checker. Everything else is just a
         search. Domain/IP lookups need no API key (DNS and RDAP are open internet infrastructure)
-        but can be turned off entirely with <code>BEACON_LOOKUPS_ENABLED=false</code> for a fully
-        offline deployment.
+        and can be toggled in Settings → Domain / IP lookups (
+        <code>BEACON_LOOKUPS_ENABLED</code> only sets the boot default).
       </p>
       <h3>API</h3>
       <ul>
@@ -2823,7 +2863,12 @@ function AdvancedSection({
         <div className="settings__fields">{byIds(LOCAL_INDEX_IDS).map(field)}</div>
         <LibraryView onDone={onDocumentsChanged} pageSize={pageSize} region={region} />
         <h3 className="settings__subhead">Number plate checker (advanced)</h3>
-        <PlateView onDone={onDocumentsChanged} />
+        <PlateView
+          onDone={onDocumentsChanged}
+          defaultIndex={
+            serverSettings.find((entry) => entry.id === 'plateIndexResults')?.value === true
+          }
+        />
       </details>
 
       <details className="settings__group">

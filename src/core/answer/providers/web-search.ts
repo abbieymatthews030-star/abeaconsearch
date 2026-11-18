@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import type { AnswerConfig } from '../../config.js';
+import { DEFAULT_USER_AGENT, type AnswerConfig } from '../../config.js';
 import { fetchWithTimeout } from '../../http.js';
 
 export interface WebProviderSpec {
@@ -153,7 +153,8 @@ export class SearxngProvider implements WebSearchProvider {
   }
 }
 
-const SEARCH_UA =
+/** DuckDuckGo HTML search blocks non-browser UAs; keep this override local to DDG. */
+const DUCKDUCKGO_BROWSER_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 function stripTags(value: string): string {
@@ -225,7 +226,7 @@ export class DuckDuckGoProvider implements WebSearchProvider {
       headers: {
         accept: 'text/html',
         'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': SEARCH_UA,
+        'user-agent': DUCKDUCKGO_BROWSER_UA,
       },
       body: `q=${encodeURIComponent(query)}&kl=wt-wt`,
       timeoutMs: this.timeoutMs,
@@ -257,7 +258,7 @@ export class DuckDuckGoProvider implements WebSearchProvider {
   ): Promise<WebResult[]> {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1&skip_disambig=0`;
     const response = await fetchWithTimeout(url, {
-      headers: { accept: 'application/json', 'user-agent': SEARCH_UA },
+      headers: { accept: 'application/json', 'user-agent': DUCKDUCKGO_BROWSER_UA },
       timeoutMs: this.timeoutMs,
       fetchImpl: this.fetchImpl,
       parentSignal: signal,
@@ -317,7 +318,7 @@ export class WikipediaProvider implements WebSearchProvider {
     const response = await fetchWithTimeout(url, {
       headers: {
         accept: 'application/json',
-        'user-agent': 'BeaconSearch/1.0 (+https://github.com/abbieymatthews030-star/abeaconsearch)',
+        'user-agent': DEFAULT_USER_AGENT,
       },
       timeoutMs: this.timeoutMs,
       fetchImpl: this.fetchImpl,
@@ -336,32 +337,6 @@ export class WikipediaProvider implements WebSearchProvider {
         snippet: hit.snippet ? stripTags(hit.snippet) : undefined,
       }));
   }
-}
-
-/**
- * Build the single provider selected by `BEACON_ANSWER_WEB_SEARCH`, or `null`
- * when that switch is unset or its credentials are missing.
- */
-export function createWebSearchProvider(
-  config: AnswerConfig,
-  fetchImpl?: typeof fetch,
-): WebSearchProvider | null {
-  const providerConfig: ProviderConfig = { timeoutMs: config.fetchTimeoutMs, fetchImpl };
-  let provider: WebSearchProvider | null = null;
-  switch (config.webSearch) {
-    case 'brave':
-      provider = new BraveSearchProvider(config.braveApiKey, providerConfig);
-      break;
-    case 'tavily':
-      provider = new TavilySearchProvider(config.tavilyApiKey, providerConfig);
-      break;
-    case 'searxng':
-      provider = new SearxngProvider(config.searxngUrl, providerConfig);
-      break;
-    default:
-      return null;
-  }
-  return provider.configured ? provider : null;
 }
 
 /**

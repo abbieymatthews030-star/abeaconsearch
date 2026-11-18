@@ -1,3 +1,5 @@
+import { DEFAULT_HTTP_TIMEOUT_MS } from './config.js';
+
 export interface FetchWithTimeoutOptions extends RequestInit {
   /** Abort the request after this many milliseconds (default 15000). */
   timeoutMs?: number;
@@ -17,7 +19,7 @@ export async function fetchWithTimeout(
   url: string,
   options: FetchWithTimeoutOptions = {},
 ): Promise<Response> {
-  const { timeoutMs = 15_000, fetchImpl = fetch, parentSignal, ...init } = options;
+  const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, fetchImpl = fetch, parentSignal, ...init } = options;
 
   const controller = new AbortController();
   const onAbort = () => controller.abort();
