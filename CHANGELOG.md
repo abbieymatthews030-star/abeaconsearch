@@ -8,6 +8,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Always-on live web search:** `/api/query` fans out to configured web
+  providers (DuckDuckGo, Brave, Tavily, SearXNG, keyless scholarly / archive
+  sources, …) on every query by default — not only when the local index is
+  empty — so results behave like Google / DuckDuckGo. Pass `web=off` (or the
+  UI “Off” setting) for local-index-only.
+- **Do not index Beacon itself:** the UI ships `noindex,nofollow`,
+  `robots.txt` disallows all crawlers, and both Caddy and the Fastify app send
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet` on every response.
 - **Home UI polish:** empty Search tab is a single brand-first composition
   (beacon mark, product name, one line, search CTA). Compact chrome returns
   once you query. IBM Plex Mono + warmer paper/grid atmosphere.

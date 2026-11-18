@@ -36,9 +36,9 @@ export interface RunSearchOptions {
   engine: Searchable;
   config: AnswerConfig;
   /**
-   * `auto` keeps the default (local hits win for ordinary searches).
-   * `off` never calls the web. `force` always does, including when the
-   * local index already matched a general query.
+   * `auto` and `force` always fan out to live web providers (Google /
+   * DuckDuckGo-style), merging open-web hits with the local index.
+   * `off` never calls the web (local index only).
    */
   web?: WebMode;
   /** Test override. When set, these backends are used instead of the configured providers. */
@@ -239,9 +239,9 @@ function synthesisFor(query: string, results: Ranked[]): SynthesisState {
 }
 
 /**
- * Local index first, then every configured web provider when the index has
- * nothing relevant — and always for queries a document index cannot answer
- * on its own (people, companies, addresses, and open questions).
+ * Local index plus every configured web provider on every query (unless
+ * `web` is `off`), so results look like a normal search engine — not only
+ * pages that happen to be in the local index.
  */
 export async function runUniversalSearch(options: RunSearchOptions): Promise<SearchEnvelope> {
   const started = performance.now();
@@ -294,11 +294,10 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   const local = filteredLocalResponse({ ...options.search, q: query }, rawLocal, localRanked);
 
   const webMode = webModeOf(options);
+  // Always hit the open web unless the caller explicitly turns it off —
+  // matching Google / DuckDuckGo rather than "only when the local index is empty".
   const shouldWeb =
-    webMode !== 'off' &&
-    query.trim().length > 0 &&
-    WEB_INTENTS.has(intent) &&
-    (webMode === 'force' || localRanked.length === 0 || intent !== 'general');
+    webMode !== 'off' && query.trim().length > 0 && WEB_INTENTS.has(intent);
 
   const specs = options.backends ?? describeWebProviders(options.config);
   const fan = shouldWeb
@@ -319,9 +318,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
           detail:
             webMode === 'off'
               ? 'web search disabled for this request'
-              : localRanked.length > 0
-                ? 'local results were relevant'
-                : 'web search not used for this query',
+              : 'web search not used for this query',
           missingEnv: spec.provider ? [] : spec.missingEnv,
           resultCount: 0,
         })),

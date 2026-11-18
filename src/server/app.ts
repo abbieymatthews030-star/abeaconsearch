@@ -22,6 +22,7 @@ export interface BuildAppOptions {
 const PLACEHOLDER_PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Beacon Search</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
 <style>body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a2e}code{background:#eee;padding:.15em .4em;border-radius:4px}</style>
 </head><body>
 <h1>🔦 Beacon Search API is running</h1>
@@ -69,6 +70,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   registerErrorHandler(app);
+  // Search engines must not index Beacon itself — only users should see results.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    void reply.header('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+    return payload;
+  });
   await app.register(cors, { origin: config.corsOrigin });
 
   if (config.rateLimit.max > 0) {
