@@ -1,7 +1,7 @@
 {
   "name": "abeaconsearch",
   "version": "1.0.0",
-  "description": "Beacon Search — a self-hostable, fully open-source full-text search engine with a web UI. No external services required.",
+  "description": "Beacon Search \u2014 a self-hostable, fully open-source full-text search engine with a web UI. No external services required.",
   "type": "module",
   "license": "MIT",
   "author": "abeaconsearch contributors",
@@ -26,7 +26,7 @@
     "beacon": "dist/cli/index.js",
     "beacon-mcp": "dist/mcp/index.js"
   },
-  "main": "dist/server/index.js",
+  "main": "src/index.ts",
   "files": [
     "dist",
     "web/dist",
