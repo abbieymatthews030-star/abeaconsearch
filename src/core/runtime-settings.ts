@@ -297,7 +297,8 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
   {
     id: 'keylessWebSearch',
     label: 'Keyless web search',
-    description: 'Allow DuckDuckGo and Wikipedia when no Brave/Tavily/SearXNG key is configured.',
+    description:
+      'Allow DuckDuckGo, Wikipedia, and deep free sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, Project Gutenberg) when no Brave/Tavily/SearXNG key is configured.',
     type: 'toggle',
     section: 'sources',
     advanced: false,

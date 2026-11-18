@@ -16,11 +16,13 @@ it is explicit about where every statement comes from and how far to trust it.
 
 1. **Retrieve** (`src/core/answer/retrieval.ts`)
    - Local index: an OR-combined search, top _n_ documents.
-   - Live web: if `BEACON_ANSWER_WEB_SEARCH` is `brave` / `tavily` / `searxng`
-     and its credential is set, the query is run against that provider and the
-     top results are fetched — each URL is checked against the SSRF guard
-     (`hostIsPrivate`) and `robots.txt`, then fetched with a timeout and reduced
-     to readable text. Unreachable / blocked URLs become `warnings`.
+   - Live web: every configured backend is queried in parallel — keyed ones
+     (`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `SEARXNG_URL`) plus keyless
+     DuckDuckGo, Wikipedia, and deep free sources (OpenAlex, Crossref, arXiv,
+     Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of
+     Congress, Project Gutenberg) when `BEACON_KEYLESS_WEB_SEARCH` is on. Top
+     URLs are fetched through the SSRF guard (`hostIsPrivate`) and `robots.txt`,
+     then reduced to readable text. Unreachable / blocked URLs become `warnings`.
    - Sources are de-duplicated by URL and capped at `BEACON_ANSWER_MAX_SOURCES`.
 2. **Ground** (`src/core/answer/extract.ts`) — each source is split into
    sentences; the sentences that best cover the query terms (weighted by source
@@ -45,7 +47,7 @@ Assigned from the source URL (`src/core/answer/trust.ts`):
 | Tier          | What it means                                                                                                                                  |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `official`    | `.gov` / `.gov.uk` / `.mil` / `.int` / `.edu` / `.ac.uk` / `nhs.uk` / EU / UN / WHO / …, or a domain listed in `BEACON_ANSWER_TRUSTED_DOMAINS` |
-| `established` | curated encyclopedias, wire services, standards bodies, peer-reviewed publishers (Wikipedia, Reuters, Nature, W3C, IETF, …)                    |
+| `established` | curated encyclopedias, wire services, standards bodies, peer-reviewed / open-scholarship publishers (Wikipedia, Wikidata, Reuters, Nature, arXiv, Crossref/DOI, OpenAlex, Europe PMC, Internet Archive, W3C, IETF, …) |
 | `community`   | any other page that was fetched successfully or is in the index with a URL                                                                     |
 | `unverified`  | no URL, the page could not be fetched, or an LLM-only statement                                                                                |
 

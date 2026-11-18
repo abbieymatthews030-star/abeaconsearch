@@ -76,9 +76,10 @@ export interface AnswerConfig {
   /** Strip common tracking query params (utm_*, fbclid, ...) from web-search result URLs. */
   stripTrackingParams: boolean;
   /**
-   * Keyless DuckDuckGo and Wikipedia search. On outside tests so a normal
-   * query can reach the web without an API key. Set BEACON_KEYLESS_WEB_SEARCH=0
-   * to disable.
+   * Keyless web search (DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv,
+   * Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of
+   * Congress, Project Gutenberg). On outside tests so a normal query can reach
+   * the web without an API key. Set BEACON_KEYLESS_WEB_SEARCH=0 to disable.
    */
   keylessWebSearch: boolean;
 }

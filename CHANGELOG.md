@@ -13,6 +13,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.onion` links through Beacon’s SOCKS5h proxy (`GET /api/tor/browse`,
   `GET /api/tor/status`, `?tor=true` on `/api/query`). Docker Compose ships a
   `tor` sidecar (`dperson/torproxy`) so users do not need Tor Browser.
+- **Deep keyless web sources** for search result lists and answer retrieval:
+  OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open
+  Library, DOAJ, Library of Congress, and Project Gutenberg (Gutendex). They
+  fan out with DuckDuckGo / Wikipedia whenever `BEACON_KEYLESS_WEB_SEARCH` is
+  on — no API keys required. Trust tiers treat the new scholarly / archive
+  domains as `established`.
 
 ### Fixed
 

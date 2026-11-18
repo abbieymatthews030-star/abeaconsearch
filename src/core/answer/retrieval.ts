@@ -240,7 +240,7 @@ export async function gatherSources(query: string, deps: GatherDeps): Promise<Ga
   const providers = deps.webSearch ?? [];
   if (providers.length === 0) {
     warnings.push(
-      'web search is not configured — set BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, or SEARXNG_URL. Keyless DuckDuckGo and Wikipedia are off (BEACON_KEYLESS_WEB_SEARCH). Answering from the local index only',
+      'web search is not configured — set BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, or SEARXNG_URL. Keyless web sources (DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, …) are off (BEACON_KEYLESS_WEB_SEARCH). Answering from the local index only',
     );
   } else {
     try {
