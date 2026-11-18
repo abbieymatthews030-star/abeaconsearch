@@ -12,6 +12,10 @@ describe('classifyTrust', () => {
   it('marks curated reference / publisher domains as established', () => {
     expect(classifyTrust('https://en.wikipedia.org/wiki/Cat', 'web').tier).toBe('established');
     expect(classifyTrust('https://www.reuters.com/world/x', 'web').tier).toBe('established');
+    expect(classifyTrust('https://arxiv.org/abs/1234.5678', 'web').tier).toBe('established');
+    expect(classifyTrust('https://doi.org/10.1000/xyz', 'web').tier).toBe('established');
+    expect(classifyTrust('https://www.wikidata.org/wiki/Q42', 'web').tier).toBe('established');
+    expect(classifyTrust('https://archive.org/details/foo', 'web').tier).toBe('established');
   });
 
   it('marks other URLs as community and missing URLs as unverified', () => {

@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { DEFAULT_USER_AGENT, type AnswerConfig } from '../../config.js';
 import { fetchWithTimeout } from '../../http.js';
+import { createDeepKeylessProviders } from './deep-web.js';
 
 export interface WebProviderSpec {
   id: string;
@@ -342,7 +343,8 @@ export class WikipediaProvider implements WebSearchProvider {
 /**
  * Every web backend Beacon can use. Keyed providers are active when their
  * credential is set, whether or not `BEACON_ANSWER_WEB_SEARCH` names them.
- * DuckDuckGo and Wikipedia need no key and are on unless keyless search is disabled.
+ * Keyless backends (DuckDuckGo, Wikipedia, and deep scholarly/archive sources)
+ * are on unless keyless search is disabled.
  */
 export function describeWebProviders(
   config: AnswerConfig,
@@ -355,6 +357,8 @@ export function describeWebProviders(
   const keyless = config.keylessWebSearch !== false;
   const duckduckgo = new DuckDuckGoProvider(providerConfig);
   const wikipedia = new WikipediaProvider(providerConfig);
+  const deep = createDeepKeylessProviders(providerConfig);
+  const keylessMissing = ['BEACON_KEYLESS_WEB_SEARCH=1'];
   return [
     {
       id: 'brave',
@@ -377,15 +381,21 @@ export function describeWebProviders(
     {
       id: 'duckduckgo',
       label: 'DuckDuckGo',
-      missingEnv: ['BEACON_KEYLESS_WEB_SEARCH=1'],
+      missingEnv: keylessMissing,
       provider: keyless ? duckduckgo : null,
     },
     {
       id: 'wikipedia',
       label: 'Wikipedia',
-      missingEnv: ['BEACON_KEYLESS_WEB_SEARCH=1'],
+      missingEnv: keylessMissing,
       provider: keyless ? wikipedia : null,
     },
+    ...deep.map((provider) => ({
+      id: provider.name.toLowerCase().replace(/\s+/g, '_'),
+      label: provider.name,
+      missingEnv: keylessMissing,
+      provider: keyless ? provider : null,
+    })),
   ];
 }
 
