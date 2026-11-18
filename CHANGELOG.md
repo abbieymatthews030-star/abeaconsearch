@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tor mode readability:** chrome (tabs, footer links, status) stays on the
+  purple field with white text instead of white-on-white; About / Privacy /
+  History / results sit in white panels; onion titles and `.onion` URLs render
+  as clear purple links when Tor is on. When SOCKS is offline, Tor search still
+  lists curated directory `.onion` links (browse still needs a live circuit).
+
 ### Changed
 
 - **Home UI polish:** empty Search tab is a single brand-first composition

@@ -269,56 +269,164 @@ h3 {
   }
 }
 
-/* Tor mode — ~50% purple / 25% white / 25% black */
+/* Tor mode — ~50% purple / 25% white / 25% black
+   Purple field for chrome; white panels for content; black ink on panels.
+   Header/footer stay on the purple field (not white) so white chrome text
+   and footer links remain visible. */
+body:has(.app[data-tor='on']) {
+  background: linear-gradient(160deg, #4b1d6b 0%, #3a1558 42%, #2a0a40 58%, #0a0a0a 100%);
+}
+
 .app[data-tor='on'] {
   --bg: #4b1d6b;
   --panel: #ffffff;
   --fg: #0a0a0a;
-  --muted: #1a0a24;
-  --faint: #3a2048;
-  --hair: rgba(0, 0, 0, 0.55);
-  --hair-soft: rgba(255, 255, 255, 0.35);
+  --muted: #3a2048;
+  --faint: #5a3a6e;
+  --hair: rgba(0, 0, 0, 0.4);
+  --hair-soft: rgba(0, 0, 0, 0.14);
   --sel: #0a0a0a;
   --sel-fg: #ffffff;
   --ok: #0a0a0a;
-  --warn: #ffffff;
+  --warn: #4b1d6b;
   --fail: #2a0a40;
+  --tor-chrome: #ffffff;
+  --tor-chrome-muted: rgba(255, 255, 255, 0.86);
   color-scheme: dark;
-  background: linear-gradient(160deg, #4b1d6b 0%, #3a1558 42%, #2a0a40 58%, #0a0a0a 100%);
+  background: transparent;
   min-height: 100vh;
 }
 
-.app[data-tor='on'] .app__header,
 .app[data-tor='on'] .search__box,
 .app[data-tor='on'] .primary-card,
 .app[data-tor='on'] .answer,
 .app[data-tor='on'] .health,
 .app[data-tor='on'] .settings__panel,
-.app[data-tor='on'] .results {
+.app[data-tor='on'] .results,
+.app[data-tor='on'] .prose,
+.app[data-tor='on'] .history,
+.app[data-tor='on'] .filters,
+.app[data-tor='on'] .empty,
+.app[data-tor='on'] .notice,
+.app[data-tor='on'] .devdetails,
+.app[data-tor='on'] .pager,
+.app[data-tor='on'] .search__meta,
+.app[data-tor='on'] .search__status,
+.app[data-tor='on'] .search__summary-note,
+.app[data-tor='on'] .search__actions {
   background: var(--panel);
   color: var(--fg);
+}
+
+.app[data-tor='on'] .results,
+.app[data-tor='on'] .prose,
+.app[data-tor='on'] .history,
+.app[data-tor='on'] .settings__panel {
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+}
+
+.app[data-tor='on'] .search__meta,
+.app[data-tor='on'] .search__status,
+.app[data-tor='on'] .search__summary-note,
+.app[data-tor='on'] .filters,
+.app[data-tor='on'] .pager,
+.app[data-tor='on'] .devdetails,
+.app[data-tor='on'] .empty,
+.app[data-tor='on'] .search__actions {
+  padding: 0.7rem 0.9rem;
+  margin-top: 0.85rem;
+  border: 1px solid rgba(0, 0, 0, 0.35);
 }
 
 .app[data-tor='on'] .brand h1,
 .app[data-tor='on'] .brand p,
 .app[data-tor='on'] .tor-status,
 .app[data-tor='on'] .app__footer,
+.app[data-tor='on'] .hero__brand,
+.app[data-tor='on'] .hero__line,
+.app[data-tor='on'] .hero__hint {
+  color: var(--tor-chrome);
+}
+
 .app[data-tor='on'] .tabs__btn {
-  color: #ffffff;
+  color: var(--tor-chrome-muted);
 }
 
+.app[data-tor='on'] .tabs__btn:hover,
 .app[data-tor='on'] .tabs__btn--active {
-  color: #ffffff;
-  border-bottom-color: #ffffff;
+  color: var(--tor-chrome);
+  border-bottom-color: var(--tor-chrome);
 }
 
-.app[data-tor='on'] .brand .beacon {
+.app[data-tor='on'] .brand .beacon,
+.app[data-tor='on'] .hero__mark {
+  color: var(--tor-chrome);
+}
+
+.app[data-tor='on'] .app__footer a,
+.app[data-tor='on'] .app__footer .linkish {
+  color: var(--tor-chrome);
+}
+
+.app[data-tor='on'] .app__footer a:hover,
+.app[data-tor='on'] .app__footer .linkish:hover {
   color: #ffffff;
+  text-decoration: underline;
+}
+
+.app[data-tor='on'] .tor-toggle:not(.tor-toggle--on) {
+  color: var(--tor-chrome);
+  border-color: var(--tor-chrome-muted);
+}
+
+.app[data-tor='on'] .tor-toggle:not(.tor-toggle--on):hover {
+  color: #ffffff;
+  border-color: #ffffff;
+}
+
+.app[data-tor='on'] .settings__nav-btn {
+  color: var(--tor-chrome-muted);
+}
+
+.app[data-tor='on'] .settings__nav-btn:hover,
+.app[data-tor='on'] .settings__nav-btn--active {
+  color: var(--tor-chrome);
+}
+
+.app[data-tor='on'] .result__title a {
+  color: #3a1558;
+  text-decoration: underline;
+  text-decoration-color: rgba(58, 21, 88, 0.55);
+  text-underline-offset: 3px;
+}
+
+.app[data-tor='on'] .result__title a:hover {
+  color: #0a0a0a;
+  text-decoration-color: #0a0a0a;
 }
 
 .app[data-tor='on'] .result__url,
+.app[data-tor='on'] .result__url a,
 .app[data-tor='on'] .result__source {
-  color: #4b1d6b;
+  color: #3a1558;
+  font-weight: 600;
+}
+
+.app[data-tor='on'] .result__url a {
+  text-decoration: underline;
+  text-decoration-color: rgba(58, 21, 88, 0.55);
+  text-underline-offset: 2px;
+}
+
+.app[data-tor='on'] .result__url a:hover {
+  color: #0a0a0a;
+}
+
+.app[data-tor='on'] .prose a {
+  color: #3a1558;
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .header__tools {
@@ -928,16 +1036,6 @@ button {
     opacity: 1;
     transform: none;
   }
-}
-
-.app[data-tor='on'] .hero__brand,
-.app[data-tor='on'] .hero__line,
-.app[data-tor='on'] .hero__hint {
-  color: #ffffff;
-}
-
-.app[data-tor='on'] .hero__mark {
-  color: #ffffff;
 }
 
 .app[data-tor='on'] .search__box--hero input {
