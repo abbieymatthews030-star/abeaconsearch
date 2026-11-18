@@ -2,5 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "fastify",
   "installCommand": "npm ci",
-  "buildCommand": "npm run build"
+  "buildCommand": "npm run build",
+  "env": {
+    "BEACON_DATA_DIR": "/tmp/beacon-data",
+    "BEACON_HOST": "0.0.0.0"
+  }
 }
