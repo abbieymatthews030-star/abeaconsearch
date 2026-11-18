@@ -1,12 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "services": {
-    "api": {
-      "root": ".",
-      "entrypoint": "Dockerfile.vercel",
-      "runtime": "container",
-      "framework": "container"
+  "framework": "fastify",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build:web",
+  "functions": {
+    "src/index.ts": {
+      "includeFiles": "web/dist/**"
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": { "service": "api" } }]
+  "env": {
+    "BEACON_DATA_DIR": "/tmp/beacon-data",
+    "BEACON_HOST": "0.0.0.0",
+    "BEACON_WEB_DIR": "web/dist"
+  }
 }
