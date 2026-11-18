@@ -1024,10 +1024,12 @@ function SearchView({
           </div>
           <h1 className="hero__brand">{siteName}</h1>
           <p className="hero__line">
-            Open-web search, cited answers, domains, and plates — on your own domain.
+            {torMode
+              ? 'Onion search through Beacon’s Tor proxy — results open without Tor Browser.'
+              : 'Open-web search, cited answers, domains, and plates — on your own domain.'}
           </p>
           {searchForm}
-          <p className="hero__hint">No account required</p>
+          <p className="hero__hint">{torMode ? 'Tor mode on' : 'No account required'}</p>
         </div>
       </section>
     );
@@ -1189,7 +1191,17 @@ function SearchView({
                 <span dangerouslySetInnerHTML={{ __html: hit.title }} />
               )}
             </h3>
-            {(hit.domain || hit.url) && <div className="result__url">{hit.domain || hit.url}</div>}
+            {(hit.domain || hit.url) && (
+              <div className="result__url">
+                {hit.url ? (
+                  <a href={hit.url} target={openInNewTab ? '_blank' : undefined} rel="noreferrer">
+                    {hit.domain || hit.url}
+                  </a>
+                ) : (
+                  hit.domain
+                )}
+              </div>
+            )}
             {hit.snippet && (
               <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
             )}

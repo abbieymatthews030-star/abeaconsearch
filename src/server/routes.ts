@@ -20,6 +20,7 @@ import type { RuntimeSettingsStore } from '../core/runtime-settings.js';
 import type { PersistentEngine } from '../core/store.js';
 import {
   browseOnion,
+  curatedTorDirectoryHits,
   probeTorSocks,
   searchTorNetwork,
   torHitsToDisplay,
@@ -154,25 +155,30 @@ async function runTorQuery(
     Math.min(ctx.config.tor.timeoutMs, 12_000),
   );
   if (!probe.ok) {
+    // SOCKS is down, but still surface curated .onion directory links so Tor
+    // mode has visible results. Browse stays gated behind /api/tor/browse.
+    const directory = curatedTorDirectoryHits(q, Math.min(Math.max(limit + offset, limit), 40));
+    const display = torHitsToDisplay(directory, q);
+    const page = display.slice(offset, offset + limit);
     return {
       query: q.trim(),
       intent: 'general',
-      outcome: 'partial',
+      outcome: page.length > 0 ? 'partial' : 'empty',
       synthesis: 'not_applicable',
       local: emptyLocal,
-      results: [],
-      total: 0,
+      results: page,
+      total: display.length,
       tookMs: Number((performance.now() - started).toFixed(1)),
-      attempted: ['Tor'],
+      attempted: ['Tor', 'Tor directory'],
       queriesTried: [q.trim()].filter(Boolean),
       diagnostics: [
         {
           id: 'tor',
           label: 'Tor',
           status: 'error',
-          detail: `Tor SOCKS unreachable at ${ctx.config.tor.socksUrl}: ${probe.error}`,
+          detail: `Tor SOCKS unreachable at ${ctx.config.tor.socksUrl}: ${probe.error} · showing ${directory.length} directory onion link${directory.length === 1 ? '' : 's'}`,
           missingEnv: [],
-          resultCount: 0,
+          resultCount: directory.length,
         },
       ],
       actions: [],

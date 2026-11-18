@@ -1,6 +1,7 @@
 export { browseOnion, type BrowseOptions, type BrowseResult } from './browse.js';
 export { isOnionHostname, onionBrowsePath, parseOnionUrl } from './onion.js';
 export {
+  curatedTorDirectoryHits,
   searchTorNetwork,
   torHitsToDisplay,
   type TorSearchHit,

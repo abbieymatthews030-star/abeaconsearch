@@ -57,7 +57,7 @@ describe('HTTP API', () => {
     expect(res.body).toMatch(/onion/i);
   });
 
-  it('returns Tor-mode search diagnostics when SOCKS is unreachable', async () => {
+  it('returns directory onion links when SOCKS is unreachable', async () => {
     // Point at a closed local port so this stays fast even if a real Tor is running.
     const isolatedDir = await mkdtemp(path.join(tmpdir(), 'beacon-tor-'));
     const config = loadConfig({
@@ -81,8 +81,10 @@ describe('HTTP API', () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.kind).toBe('general');
-      expect(body.results).toEqual([]);
       expect(body.outcome).toBe('partial');
+      expect(body.results.length).toBeGreaterThan(0);
+      expect(body.results[0]?.url).toMatch(/^\/api\/tor\/browse\?url=/);
+      expect(body.results[0]?.domain).toContain('.onion');
       expect(
         body.diagnostics.some(
           (d: { id: string; status: string }) => d.id === 'tor' && d.status === 'error',

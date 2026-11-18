@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { torHitsToDisplay } from './search.js';
+import { curatedTorDirectoryHits, torHitsToDisplay } from './search.js';
 
 describe('torHitsToDisplay', () => {
   it('rewrites onion URLs through the Beacon browse proxy', () => {
@@ -18,5 +18,13 @@ describe('torHitsToDisplay', () => {
     expect(hits[0]?.url).toMatch(/^\/api\/tor\/browse\?url=/);
     expect(hits[0]?.tags).toContain('onion');
     expect(hits[0]?.domain).toContain('.onion');
+  });
+});
+
+describe('curatedTorDirectoryHits', () => {
+  it('returns onion directory entries for offline Tor mode', () => {
+    const hits = curatedTorDirectoryHits('duckduckgo', 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.url.includes('.onion'))).toBe(true);
   });
 });

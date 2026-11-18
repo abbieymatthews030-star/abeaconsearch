@@ -314,6 +314,11 @@ function directoryHits(query: string, limit: number): TorSearchHit[] {
   }));
 }
 
+/** Curated official onions only — safe to call when SOCKS is offline. */
+export function curatedTorDirectoryHits(query: string, limit = 10): TorSearchHit[] {
+  return directoryHits(query.trim() || 'tor', Math.max(1, Math.min(limit, DIRECTORY.length)));
+}
+
 /**
  * Search onion services via Ahmia over Tor, merging a curated official directory
  * so empty/failed queries still surface known-good onion endpoints.
