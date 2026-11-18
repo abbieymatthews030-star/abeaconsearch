@@ -83,19 +83,9 @@ async function runBackend(
   const hits: AnnotatedWebResult[] = [];
   let error: string | undefined;
 
+  // Callers only pass backends that already have a provider (active filter).
   if (!provider) {
-    return {
-      hits,
-      tried,
-      diagnostic: {
-        id: backend.id,
-        label: backend.label,
-        status: 'not_configured',
-        detail: `not configured — set ${backend.missingEnv.join(' or ')}`,
-        missingEnv: backend.missingEnv,
-        resultCount: 0,
-      },
-    };
+    throw new Error(`web backend "${backend.id}" has no provider`);
   }
 
   for (let i = 0; i < variants.length; i++) {

@@ -10,12 +10,20 @@ import { createPlateChecker, plateCheckToDocument } from '../core/plate/index.js
 import type { CheckStatus } from '../core/plate/types.js';
 import { PersistentEngine } from '../core/store.js';
 import { documentInputSchema, type DocumentInput } from '../core/types.js';
-import { buildApp } from '../server/app.js';
+import { startServer } from '../server/start.js';
 
 loadDotEnv();
 
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { version: string };
+
+function splitCsv(value?: string): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
 
 async function openEngine(): Promise<{ engine: PersistentEngine; indexFile: string }> {
   const config = loadConfig();
@@ -45,18 +53,7 @@ program
       ...(opts.port ? { port: Number(opts.port) } : {}),
       ...(opts.host ? { host: opts.host } : {}),
     });
-    const logger = createLogger(config);
-    const engine = new PersistentEngine({
-      indexFile: config.indexFile,
-      debounceMs: config.persistDebounceMs,
-      logger,
-    });
-    await engine.load();
-    const app = await buildApp({ config, engine, logger });
-    await app.listen({ host: config.host, port: config.port });
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-      process.on(signal, () => void app.close().then(() => process.exit(0)));
-    }
+    await startServer({ config });
   });
 
 program
@@ -76,12 +73,7 @@ program
       body: opts.body ?? '',
       url: opts.url,
       source: opts.source,
-      tags: opts.tags
-        ? opts.tags
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean)
-        : [],
+      tags: splitCsv(opts.tags),
     });
     const doc = engine.upsert(input);
     await engine.flush();
@@ -129,12 +121,7 @@ program
           url,
           maxPages: opts.maxPages ? Number(opts.maxPages) : config.crawlMaxPages,
           sameOriginOnly: !opts.allOrigins,
-          tags: opts.tags
-            ? opts.tags
-                .split(',')
-                .map((t) => t.trim())
-                .filter(Boolean)
-            : [],
+          tags: splitCsv(opts.tags),
           userAgent: config.crawlUserAgent,
           timeoutMs: config.crawlTimeoutMs,
           delayMs: config.crawlDelayMs,

@@ -3,6 +3,8 @@
  * that its `search`/`index` tools operate through the same API (and index file)
  * as everything else, avoiding concurrent-writer races on the snapshot.
  */
+import type { BeaconDocument, IndexStats, SearchResponse } from '../core/types.js';
+
 export class BeaconClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -31,7 +33,16 @@ export class BeaconClient {
       );
     }
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : null;
+    let payload: unknown = null;
+    if (text) {
+      try {
+        payload = JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(
+          `Beacon API HTTP ${response.status} returned non-JSON body: ${text.slice(0, 200)}`,
+        );
+      }
+    }
     if (!response.ok) {
       const message =
         payload && typeof payload === 'object' && 'message' in payload
@@ -42,11 +53,18 @@ export class BeaconClient {
     return payload as T;
   }
 
-  health(): Promise<Record<string, unknown>> {
+  health(): Promise<{
+    status: 'ok';
+    documents: number;
+    uptimeSeconds: number;
+    plateChecks: { vehicleData: boolean; motHistory: boolean };
+    answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
+    lookups: { enabled: boolean };
+  }> {
     return this.request('/api/health');
   }
 
-  stats(): Promise<Record<string, unknown>> {
+  stats(): Promise<IndexStats> {
     return this.request('/api/stats');
   }
 
@@ -55,7 +73,7 @@ export class BeaconClient {
     limit?: number;
     tags?: string[];
     source?: string;
-  }): Promise<Record<string, unknown>> {
+  }): Promise<SearchResponse> {
     const qs = new URLSearchParams({ q: params.q });
     if (params.limit) qs.set('limit', String(params.limit));
     if (params.source) qs.set('source', params.source);
@@ -69,7 +87,7 @@ export class BeaconClient {
     url?: string;
     tags?: string[];
     source?: string;
-  }): Promise<Record<string, unknown>> {
+  }): Promise<BeaconDocument> {
     return this.request('/api/documents', { method: 'POST', body: JSON.stringify(doc) });
   }
 }

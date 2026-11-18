@@ -1,3 +1,4 @@
+import { DEFAULT_PLATE_TIMEOUT_MS } from '../../config.js';
 import { fetchWithTimeout } from '../../http.js';
 import type { VehicleRecord } from '../types.js';
 import type { ProviderResult, VehicleProvider } from './types.js';
@@ -47,7 +48,7 @@ export class DvlaVesProvider implements VehicleProvider {
   constructor(config: DvlaVesConfig = {}) {
     this.apiKey = config.apiKey?.trim() || undefined;
     this.baseUrl = config.baseUrl?.trim() || DEFAULT_BASE_URL;
-    this.timeoutMs = config.timeoutMs ?? 12_000;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_PLATE_TIMEOUT_MS;
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 

@@ -1,6 +1,7 @@
 import type { AnswerConfig } from '../config.js';
 import type { Logger } from '../logger.js';
 import { normalizeWhitespace, tokenize } from '../text.js';
+import { roundMs } from '../timing.js';
 import { clusterCandidates, looksLikeIdentityQuery, type EntityCandidate } from './evidence.js';
 import {
   queryKeywords,
@@ -91,14 +92,14 @@ export class AnswerService {
 
   /** Public capability summary for `/health` (no secrets). */
   get capabilities(): {
-    enabled: true;
+    enabled: boolean;
     autoAnswer: boolean;
     webSearch: string | null;
     llm: string[];
   } {
     const webSearch = this.resolveProviders();
     return {
-      enabled: true,
+      enabled: this.deps.config.enabled,
       autoAnswer: this.deps.config.autoAnswer,
       webSearch:
         webSearch.length > 0 ? webSearch.map((provider) => provider.name).join(', ') : null,
@@ -204,7 +205,7 @@ export class AnswerService {
         sources: retrieved.map((s) => this.toPublicSource(query, s, grounded, citedIds)),
         warnings,
         generatedAt: this.now().toISOString(),
-        tookMs: Number((performance.now() - startedAt).toFixed(1)),
+        tookMs: roundMs(startedAt),
         cached: false,
         ...partial,
       };
@@ -469,7 +470,7 @@ export class AnswerService {
       warnings,
       searchGaps: this.buildSearchGaps(retrieved, warnings, true),
       generatedAt: this.now().toISOString(),
-      tookMs: Number((performance.now() - startedAt).toFixed(1)),
+      tookMs: roundMs(startedAt),
       cached: false,
     };
   }
@@ -562,7 +563,7 @@ export class AnswerService {
       sources: retrieved.map((s) => this.toPublicSource(query, s, grounded, new Set<number>())),
       warnings,
       generatedAt: this.now().toISOString(),
-      tookMs: Number((performance.now() - startedAt).toFixed(1)),
+      tookMs: roundMs(startedAt),
       cached: false,
       confidence: 'none' as const,
       confidenceReason: 'the retrieved sources do not answer this question',

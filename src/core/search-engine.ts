@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import MiniSearch from 'minisearch';
 import { highlight, makeSnippet, normalizeWhitespace, slugify, tokenize } from './text.js';
+import { roundMs } from './timing.js';
 import type {
   BeaconDocument,
   DocumentInput,
@@ -11,11 +12,31 @@ import type {
   SearchResponse,
 } from './types.js';
 
+/** MiniSearch fuzzy edit-distance factor used by search / suggest / didYouMean. */
+const FUZZY_FACTOR = 0.2;
+
 interface IndexedDoc {
   id: string;
   title: string;
   body: string;
   tags: string;
+}
+
+function topTermsFromSearch(
+  results: Array<{ terms: string[]; score: number }>,
+  keepTerm: (term: string) => boolean,
+  limit?: number,
+): string[] {
+  const bestScore = new Map<string, number>();
+  for (const result of results) {
+    for (const term of result.terms) {
+      if (!keepTerm(term)) continue;
+      bestScore.set(term, Math.max(bestScore.get(term) ?? 0, result.score));
+    }
+  }
+  const ranked = [...bestScore.entries()].sort((a, b) => b[1] - a[1]);
+  const sliced = limit === undefined ? ranked : ranked.slice(0, limit);
+  return sliced.map(([term]) => term);
 }
 
 export interface SearchEngineEvents {
@@ -145,7 +166,7 @@ export class SearchEngine {
       this.mini
         .search(q, {
           prefix: query.prefix,
-          fuzzy: query.fuzzy ? 0.2 : false,
+          fuzzy: query.fuzzy ? FUZZY_FACTOR : false,
           boost: { title: 3, tags: 2 },
           combineWith,
         })
@@ -206,7 +227,7 @@ export class SearchEngine {
       total: sorted.length,
       limit: query.limit,
       offset: query.offset,
-      tookMs: Number((performance.now() - startedAt).toFixed(2)),
+      tookMs: roundMs(startedAt),
       hits,
       facets,
     };
@@ -253,15 +274,12 @@ export class SearchEngine {
    */
   private didYouMean(q: string): string | undefined {
     const query = q.trim().toLowerCase();
-    const bestScore = new Map<string, number>();
-    for (const result of this.mini.search(q, { prefix: false, fuzzy: 0.2 })) {
-      for (const term of result.terms) {
-        if (term.toLowerCase() === query) continue;
-        bestScore.set(term, Math.max(bestScore.get(term) ?? 0, result.score));
-      }
-    }
-    const [top] = [...bestScore.entries()].sort((a, b) => b[1] - a[1]);
-    return top?.[0];
+    const [top] = topTermsFromSearch(
+      this.mini.search(q, { prefix: false, fuzzy: FUZZY_FACTOR }),
+      (term) => term.toLowerCase() !== query,
+      1,
+    );
+    return top;
   }
 
   /**
@@ -277,17 +295,11 @@ export class SearchEngine {
     const query = q.trim();
     if (!query) return [];
     const prefix = query.toLowerCase();
-    const bestScore = new Map<string, number>();
-    for (const result of this.mini.search(query, { prefix: true, fuzzy: 0.2 })) {
-      for (const term of result.terms) {
-        if (!term.toLowerCase().startsWith(prefix)) continue;
-        bestScore.set(term, Math.max(bestScore.get(term) ?? 0, result.score));
-      }
-    }
-    return [...bestScore.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, limit)
-      .map(([term]) => term);
+    return topTermsFromSearch(
+      this.mini.search(query, { prefix: true, fuzzy: FUZZY_FACTOR }),
+      (term) => term.toLowerCase().startsWith(prefix),
+      limit,
+    );
   }
 
   stats(indexFile: string): IndexStats {

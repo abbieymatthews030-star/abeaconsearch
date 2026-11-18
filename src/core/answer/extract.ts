@@ -1,6 +1,9 @@
+import { STOPWORDS } from '../stopwords.js';
 import { normalizeWhitespace, tokenize } from '../text.js';
 import type { RetrievedSource } from './retrieval.js';
 import { trustWeight } from './trust.js';
+
+export { STOPWORDS };
 
 /** A sentence lifted verbatim from a source, tied back to that source's id. */
 export interface GroundedClaim {
@@ -8,89 +11,6 @@ export interface GroundedClaim {
   sourceId: number;
   score: number;
 }
-
-/** Low-signal words excluded from query/claim matching. */
-export const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'but',
-  'of',
-  'to',
-  'in',
-  'on',
-  'at',
-  'for',
-  'is',
-  'are',
-  'was',
-  'were',
-  'be',
-  'been',
-  'being',
-  'it',
-  'its',
-  'this',
-  'that',
-  'these',
-  'those',
-  'as',
-  'by',
-  'with',
-  'from',
-  'into',
-  'about',
-  'which',
-  'who',
-  'whom',
-  'whose',
-  'what',
-  'when',
-  'where',
-  'why',
-  'how',
-  'can',
-  'could',
-  'do',
-  'does',
-  'did',
-  'has',
-  'have',
-  'had',
-  'will',
-  'would',
-  'should',
-  'may',
-  'might',
-  'must',
-  'not',
-  'no',
-  'yes',
-  'i',
-  'you',
-  'he',
-  'she',
-  'they',
-  'we',
-  'me',
-  'my',
-  'your',
-  'his',
-  'her',
-  'their',
-  'our',
-  'so',
-  'if',
-  'then',
-  'than',
-  'there',
-  'here',
-  'out',
-  'up',
-  'down',
-]);
 
 /** Distinct, meaningful tokens from a query (stopwords and 1-2 char tokens dropped). */
 export function queryKeywords(query: string): string[] {

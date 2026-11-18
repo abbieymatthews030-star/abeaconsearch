@@ -1,4 +1,5 @@
 import { resolve4, resolve6, resolveMx, resolveNs } from 'node:dns/promises';
+import { DEFAULT_LOOKUP_TIMEOUT_MS } from '../config.js';
 import { entityWithRole, eventDate, fetchRdap, vcardField } from './rdap.js';
 
 export interface DomainLookup {
@@ -20,7 +21,7 @@ export async function lookupDomain(
   domain: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<DomainLookup> {
-  const timeoutMs = opts.timeoutMs ?? 8_000;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_LOOKUP_TIMEOUT_MS;
   const notices: string[] = [];
 
   const [addresses, ipv6Addresses, nameservers, mxRecords] = await Promise.all([

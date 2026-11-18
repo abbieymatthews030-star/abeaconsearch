@@ -18,7 +18,7 @@ describe('classifyQuery', () => {
   it('classifies arithmetic expressions, but not bare numbers', () => {
     expect(classifyQuery('42 * 18')).toEqual({ kind: 'calculation', value: '42 * 18' });
     expect(classifyQuery('(1+2)*3')).toEqual({ kind: 'calculation', value: '(1+2)*3' });
-    expect(classifyQuery('2024')).toEqual({ kind: 'default', value: '2024' });
+    expect(classifyQuery('2024')).toEqual({ kind: 'general', value: '2024' });
   });
 
   it('classifies "plate <reg>" and takes only the first token', () => {
@@ -26,9 +26,9 @@ describe('classifyQuery', () => {
   });
 
   it('falls back to a plain search for everything else', () => {
-    expect(classifyQuery('react hooks')).toEqual({ kind: 'default', value: 'react hooks' });
+    expect(classifyQuery('react hooks')).toEqual({ kind: 'general', value: 'react hooks' });
     expect(classifyQuery('node.js framework')).toEqual({
-      kind: 'default',
+      kind: 'general',
       value: 'node.js framework',
     });
   });

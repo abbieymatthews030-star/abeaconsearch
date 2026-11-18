@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-const FALSEY = new Set(['false', '0', 'no', 'off', '']);
+export const FALSEY = new Set(['false', '0', 'no', 'off', '']);
+
+function parseBoolish(v: boolean | string | undefined, whenUndefined: boolean | undefined) {
+  if (v === undefined) return whenUndefined;
+  if (typeof v === 'boolean') return v;
+  return !FALSEY.has(v.trim().toLowerCase());
+}
 
 /**
  * A boolean that also accepts query-string values. `z.coerce.boolean()` is unsafe
@@ -10,22 +16,14 @@ export function booleanParam(defaultValue: boolean) {
   return z
     .union([z.boolean(), z.string()])
     .optional()
-    .transform((v) => {
-      if (v === undefined) return defaultValue;
-      if (typeof v === 'boolean') return v;
-      return !FALSEY.has(v.trim().toLowerCase());
-    });
+    .transform((v) => parseBoolish(v, defaultValue) as boolean);
 }
 
 /** Like {@link booleanParam} but stays `undefined` when the value is absent. */
 export const optionalBooleanParam = z
   .union([z.boolean(), z.string()])
   .optional()
-  .transform((v) => {
-    if (v === undefined) return undefined;
-    if (typeof v === 'boolean') return v;
-    return !FALSEY.has(v.trim().toLowerCase());
-  });
+  .transform((v) => parseBoolish(v, undefined));
 
 /** A document stored in the Beacon Search index. */
 export interface BeaconDocument {
@@ -102,9 +100,12 @@ export const answerQuerySchema = z.object({
 });
 export type AnswerQuery = z.infer<typeof answerQuerySchema>;
 
+/** Upper bound shared by crawl API validation and the crawlMaxPages setting. */
+export const CRAWL_MAX_PAGES_LIMIT = 2000;
+
 export const crawlInputSchema = z.object({
   url: z.string().trim().url(),
-  maxPages: z.coerce.number().int().min(1).max(2000).optional(),
+  maxPages: z.coerce.number().int().min(1).max(CRAWL_MAX_PAGES_LIMIT).optional(),
   sameOriginOnly: booleanParam(true),
   tags: z.array(z.string().trim().min(1).max(128)).max(32).default([]),
 });
