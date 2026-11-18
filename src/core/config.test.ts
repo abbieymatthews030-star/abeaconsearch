@@ -8,6 +8,8 @@ const TOUCHED = [
   'DVLA_VES_API_KEY',
   'BEACON_PLATE_TIMEOUT_MS',
   'BEACON_HOST',
+  'BEACON_SITE_NAME',
+  'BEACON_SITE_URL',
 ];
 
 describe('loadConfig', () => {
@@ -32,6 +34,16 @@ describe('loadConfig', () => {
     expect(config.plate.dvlaVesApiKey).toBeUndefined();
     expect(config.tor.enabled).toBe(true);
     expect(config.tor.socksUrl).toBe('socks5h://127.0.0.1:9050');
+    expect(config.site.name).toBe('Beacon Search');
+    expect(config.site.url).toBe('');
+  });
+
+  it('reads public site identity from the environment', () => {
+    process.env.BEACON_SITE_NAME = '  My Beacon  ';
+    process.env.BEACON_SITE_URL = ' https://search.example.com ';
+    const config = loadConfig();
+    expect(config.site.name).toBe('My Beacon');
+    expect(config.site.url).toBe('https://search.example.com');
   });
 
   it('trims string env values', () => {

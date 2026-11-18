@@ -1,0 +1,27 @@
+# Public website stack — same Beacon + Tor services as docker-compose.yml,
+# but Caddy serves your domain without basic auth.
+#
+#   cp deploy/.env.public.example .env
+#   # set BEACON_DOMAIN + BEACON_SITE_URL
+#   docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --build
+#
+# Requires BEACON_DOMAIN (and ideally BEACON_SITE_URL) in .env.
+# Does not require BEACON_USER / BEACON_PASSWORD_HASH.
+
+services:
+  beacon:
+    environment:
+      BEACON_SITE_NAME: ${BEACON_SITE_NAME:-Beacon Search}
+      BEACON_SITE_URL: ${BEACON_SITE_URL:-}
+      # Slightly stricter defaults when the UI is on the open internet.
+      BEACON_RATE_LIMIT_MAX: ${BEACON_RATE_LIMIT_MAX:-80}
+      BEACON_LOOKUPS_ENABLED: ${BEACON_LOOKUPS_ENABLED:-true}
+
+  caddy:
+    environment:
+      BEACON_DOMAIN: ${BEACON_DOMAIN:?Set BEACON_DOMAIN in .env}
+      # Clear private-auth vars so a leftover .env does not confuse operators.
+      BEACON_USER: ''
+      BEACON_PASSWORD_HASH: ''
+    volumes:
+      - ./deploy/Caddyfile.public:/etc/caddy/Caddyfile:ro

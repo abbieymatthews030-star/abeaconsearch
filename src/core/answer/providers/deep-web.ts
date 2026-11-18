@@ -59,7 +59,12 @@ function openAlexAbstract(
   }
   if (slots.length === 0) return undefined;
   slots.sort((a, b) => a.pos - b.pos);
-  return clip(slots.slice(0, maxWords).map((s) => s.word).join(' '));
+  return clip(
+    slots
+      .slice(0, maxWords)
+      .map((s) => s.word)
+      .join(' '),
+  );
 }
 
 async function getJson<T>(
@@ -190,8 +195,7 @@ export class ArxivProvider implements WebSearchProvider {
       .replace(/ /g, '+');
     if (!safe) return [];
     const url =
-      `https://export.arxiv.org/api/query?search_query=all:${safe}` +
-      `&start=0&max_results=${max}`;
+      `https://export.arxiv.org/api/query?search_query=all:${safe}` + `&start=0&max_results=${max}`;
     const response = await fetchWithTimeout(url, {
       headers: { accept: 'application/atom+xml', 'user-agent': DEFAULT_USER_AGENT },
       timeoutMs: this.config.timeoutMs,
@@ -355,9 +359,7 @@ export class InternetArchiveProvider implements WebSearchProvider {
         const id = doc.identifier;
         if (!id) return null;
         const title = Array.isArray(doc.title) ? doc.title[0] : doc.title;
-        const description = Array.isArray(doc.description)
-          ? doc.description[0]
-          : doc.description;
+        const description = Array.isArray(doc.description) ? doc.description[0] : doc.description;
         const url = `https://archive.org/details/${encodeURIComponent(id)}`;
         const snippet = [doc.year ? String(doc.year) : undefined, doc.mediatype, description]
           .filter(Boolean)
@@ -495,7 +497,9 @@ export class LocProvider implements WebSearchProvider {
         const url =
           asHttpUrl(item.url) ||
           (item.id?.startsWith('http') ? asHttpUrl(item.id) : undefined) ||
-          (item.id ? asHttpUrl(`https://www.loc.gov${item.id.startsWith('/') ? '' : '/'}${item.id}`) : undefined);
+          (item.id
+            ? asHttpUrl(`https://www.loc.gov${item.id.startsWith('/') ? '' : '/'}${item.id}`)
+            : undefined);
         if (!title || !url) return null;
         const format = Array.isArray(item.original_format)
           ? item.original_format[0]
@@ -535,7 +539,11 @@ export class GutenbergProvider implements WebSearchProvider {
         if (!book.id || !book.title) return null;
         const url = `https://www.gutenberg.org/ebooks/${book.id}`;
         const snippet = [
-          book.authors?.map((a) => a.name).filter(Boolean).slice(0, 3).join(', '),
+          book.authors
+            ?.map((a) => a.name)
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(', '),
           book.languages?.slice(0, 2).join(', '),
           book.summaries?.[0],
         ]

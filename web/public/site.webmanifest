@@ -1,0 +1,17 @@
+{
+  "name": "Beacon Search",
+  "short_name": "Beacon",
+  "description": "Self-hostable open-source search website.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbfbfa",
+  "theme_color": "#0b0b0c",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

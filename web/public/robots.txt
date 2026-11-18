@@ -1,4 +1,11 @@
 User-agent: *
 Allow: /
 
+# Disallow mutating API surfaces from naive crawlers (GET search stays open).
+Disallow: /api/documents
+Disallow: /api/crawl
+Disallow: /api/index
+Disallow: /api/settings
+Disallow: /api/providers
+
 Sitemap: https://abeaconsearch.com/sitemap.xml

@@ -43,6 +43,7 @@ describe('HTTP API', () => {
       plateChecks: expect.any(Object),
       answer: { enabled: true, webSearch: null, llm: [] },
       tor: { enabled: true, socksUrl: expect.stringContaining('socks') },
+      site: { name: 'Beacon Search', url: '' },
     });
     expect(Object.keys(bare.json()).sort()).toEqual(Object.keys(api.json()).sort());
   });
@@ -82,9 +83,11 @@ describe('HTTP API', () => {
       expect(body.kind).toBe('general');
       expect(body.results).toEqual([]);
       expect(body.outcome).toBe('partial');
-      expect(body.diagnostics.some((d: { id: string; status: string }) => d.id === 'tor' && d.status === 'error')).toBe(
-        true,
-      );
+      expect(
+        body.diagnostics.some(
+          (d: { id: string; status: string }) => d.id === 'tor' && d.status === 'error',
+        ),
+      ).toBe(true);
     } finally {
       await torApp.close();
       await rm(isolatedDir, { recursive: true, force: true });

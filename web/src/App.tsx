@@ -32,9 +32,10 @@ import {
   type SettingSection,
 } from './settings-registry';
 
-type Tab = 'search' | 'history' | 'settings' | 'docs';
+type Tab = 'search' | 'history' | 'about' | 'privacy' | 'settings';
 
 const DEFAULT_PAGE_SIZE = 10;
+const SITE_REPO = 'https://github.com/abbieymatthews030-star/abeaconsearch';
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -282,10 +283,12 @@ function countConnectedSources(health: HealthResponse | null): number {
   return n;
 }
 
-const TAB_IDS: Tab[] = ['search', 'history', 'settings', 'docs'];
+const TAB_IDS: Tab[] = ['search', 'history', 'about', 'privacy', 'settings'];
 
 function tabFromHash(hash: string): Tab {
-  const id = hash.replace(/^#/, '') as Tab;
+  const raw = hash.replace(/^#/, '');
+  // `#docs` was the old About route — keep bookmarks working.
+  const id = (raw === 'docs' ? 'about' : raw) as Tab;
   return TAB_IDS.includes(id) ? id : 'search';
 }
 
@@ -295,6 +298,15 @@ function initialQueryFromUrl(): string {
     return new URLSearchParams(window.location.search).get('q')?.trim() ?? '';
   } catch {
     return '';
+  }
+}
+
+function siteHost(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
   }
 }
 
@@ -407,14 +419,39 @@ export function App(): JSX.Element {
     return () => controller.abort();
   }, [torMode, health?.tor?.socksUrl]);
 
+  const siteName = health?.site?.name?.trim() || 'Beacon Search';
+  const canonicalHost = siteHost(health?.site?.url);
+  const tagline = torMode
+    ? 'tor · onion search'
+    : canonicalHost
+      ? canonicalHost
+      : 'self-hostable search';
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.title = siteName;
+    const meta = document.querySelector('meta[name="application-name"]');
+    if (meta) meta.setAttribute('content', siteName);
+  }, [siteName]);
+
   return (
     <div className="app" data-density={density} data-tor={torMode ? 'on' : 'off'}>
+      <div className="app__glow" aria-hidden />
       <header className="app__header">
-        <div className="brand">
-          <Beacon size={40} />
-          <h1>Beacon Search</h1>
-          <p>{torMode ? 'tor · onion search' : 'self-hostable search'}</p>
-        </div>
+        <button
+          type="button"
+          className="brand"
+          onClick={() => {
+            setInput('');
+            setPendingQuery(null);
+            selectTab('search');
+          }}
+          aria-label={`${siteName} home`}
+        >
+          <Beacon size={48} />
+          <h1>{siteName}</h1>
+          <p>{tagline}</p>
+        </button>
         <div className="header__tools">
           <button
             type="button"
@@ -432,13 +469,14 @@ export function App(): JSX.Element {
             </span>
             Tor
           </button>
-          <nav className="tabs" aria-label="Sections">
+          <nav className="tabs" aria-label="Site">
             {(
               [
                 ['search', 'Search'],
                 ['history', 'History'],
+                ['about', 'About'],
+                ['privacy', 'Privacy'],
                 ['settings', 'Settings'],
-                ['docs', 'Docs'],
               ] as Array<[Tab, string]>
             ).map(([id, label]) => (
               <button
@@ -474,6 +512,7 @@ export function App(): JSX.Element {
             clientSettings={clientSettings}
             pendingQuery={pendingQuery}
             onPendingConsumed={() => setPendingQuery(null)}
+            siteName={siteName}
           />
         )}
         {tab === 'history' && (
@@ -493,7 +532,8 @@ export function App(): JSX.Element {
             onClearHistory={clearHistory}
           />
         )}
-        {tab === 'docs' && <DocsView />}
+        {tab === 'about' && <AboutView siteName={siteName} canonicalHost={canonicalHost} />}
+        {tab === 'privacy' && <PrivacyView siteName={siteName} />}
       </main>
 
       <footer className="app__footer">
@@ -504,9 +544,20 @@ export function App(): JSX.Element {
         ) : (
           <span>Index status unavailable</span>
         )}
-        <a href="/api/health" target="_blank" rel="noreferrer">
-          API health
-        </a>
+        <nav className="app__footer-nav" aria-label="Footer">
+          <button type="button" className="linkish" onClick={() => selectTab('about')}>
+            About
+          </button>
+          <button type="button" className="linkish" onClick={() => selectTab('privacy')}>
+            Privacy
+          </button>
+          <a href={SITE_REPO} target="_blank" rel="noreferrer">
+            Source
+          </a>
+          <a href="/api/health" target="_blank" rel="noreferrer">
+            API
+          </a>
+        </nav>
       </footer>
     </div>
   );
@@ -527,6 +578,7 @@ function SearchView({
   clientSettings,
   pendingQuery,
   onPendingConsumed,
+  siteName,
 }: {
   input: string;
   onInputChange: (value: string) => void;
@@ -535,6 +587,7 @@ function SearchView({
   clientSettings: ClientSettingsApi;
   pendingQuery: string | null;
   onPendingConsumed: () => void;
+  siteName: string;
 }): JSX.Element {
   const resultsPerPage = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
   const openInNewTab = clientSettings.values.openInNewTab !== false;
@@ -1190,10 +1243,16 @@ function SearchView({
         )}
 
       {showReady && (
-        <div className="empty">
-          <Beacon size={150} />
-          <strong>Ready</strong>
-          <span>Type to search — a name, a domain, a question, or plain text.</span>
+        <div className="hero">
+          <div className="hero__mark">
+            <Beacon size={168} />
+          </div>
+          <p className="hero__brand">{siteName}</p>
+          <p className="hero__line">
+            Search your index, the open web, domains, plates, and questions — hosted on your own
+            domain.
+          </p>
+          <p className="hero__hint">Start typing above. No account required on this instance.</p>
         </div>
       )}
 
@@ -2547,88 +2606,109 @@ function PlateView({
   );
 }
 
-function DocsView(): JSX.Element {
+function AboutView({
+  siteName,
+  canonicalHost,
+}: {
+  siteName: string;
+  canonicalHost: string | null;
+}): JSX.Element {
   return (
     <section className="prose">
-      <h2>About Beacon Search</h2>
+      <h2>About {siteName}</h2>
       <p>
-        Beacon Search is a small, dependency-light search engine you can run anywhere Node.js runs.
-        It keeps a full-text index in memory (powered by MiniSearch) and persists it to a single
-        JSON file — no database, no external services required for the core index.
+        {siteName} is a full search website you can run on your own domain. It keeps a full-text
+        index in memory (powered by MiniSearch) and persists it to a single JSON file — no database
+        required for the core index. Deploy with Docker + Caddy for automatic HTTPS.
       </p>
-      <h3>The universal box</h3>
+      {canonicalHost && (
+        <p>
+          This instance is published at <code>{canonicalHost}</code>.
+        </p>
+      )}
+      <h3>What you can search</h3>
       <p>
-        The <em>Search</em> tab is a single input. Alongside the usual local-index search, Beacon
-        classifies what you typed and — when it recognises the shape — attaches a structured result:
-        a bare domain resolves DNS + RDAP registration data, an IP resolves reverse DNS + RDAP
-        network data, an arithmetic expression is evaluated directly, and{' '}
-        <code>plate &lt;reg&gt;</code> runs the number plate checker. Everything else is just a
-        search. Domain/IP lookups need no API key (DNS and RDAP are open internet infrastructure)
-        and can be toggled in Settings → Domain / IP lookups (<code>BEACON_LOOKUPS_ENABLED</code>{' '}
-        only sets the boot default).
+        The Search box is universal. Alongside the local index, Beacon classifies what you typed:
+        domains resolve via DNS + RDAP, IPs get reverse DNS + RDAP, arithmetic is evaluated
+        directly, and <code>plate &lt;reg&gt;</code> runs the number plate checker. Questions get a
+        short cited answer woven only from retrieved sources. Optional Tor mode searches onion
+        services through a SOCKS proxy.
+      </p>
+      <h3>Self-host on your domain</h3>
+      <p>
+        Point DNS at a server, set <code>BEACON_DOMAIN</code> (and <code>BEACON_SITE_URL</code>),
+        then start Compose. Private mode uses HTTP basic auth; public website mode serves the site
+        openly while blocking admin write routes. See <code>docs/website.md</code> in the
+        repository.
       </p>
       <h3>API</h3>
       <ul>
         <li>
-          <code>GET /api/search?q=…&amp;tags=…&amp;limit=…&amp;offset=…</code>
+          <code>GET /api/search?q=…</code> · <code>GET /api/query?q=…</code>
         </li>
         <li>
-          <code>GET /api/query?q=…</code> — same params as <code>/api/search</code>, plus the
-          classified <code>primary</code> result
+          <code>GET /api/answer?q=…</code> · <code>GET /api/suggest?q=…</code>
         </li>
         <li>
-          <code>GET /api/documents</code> · <code>GET /api/documents/:id</code>
+          <code>GET /api/plate/:reg</code> · <code>GET /api/health</code>
         </li>
         <li>
-          <code>POST /api/documents</code> · <code>PUT /api/documents/:id</code> ·{' '}
-          <code>DELETE /api/documents/:id</code>
-        </li>
-        <li>
-          <code>POST /api/documents/bulk</code> · <code>POST /api/crawl</code> ·{' '}
-          <code>GET /api/stats</code>
-        </li>
-        <li>
-          <code>GET /api/plate/:reg</code> · <code>POST /api/plate/check</code>
-        </li>
-        <li>
-          <code>GET /api/answer?q=…</code>
-        </li>
-        <li>
-          <code>GET /api/settings</code> · <code>PATCH /api/settings</code> ·{' '}
-          <code>POST /api/settings/reset</code>
-        </li>
-        <li>
-          <code>GET /api/providers</code> · <code>POST /api/providers/:id/test</code>
-        </li>
-        <li>
-          <code>GET /api/diagnostics</code>
+          <code>GET /api/documents</code> · <code>POST /api/crawl</code> (often locked on public
+          hosts)
         </li>
       </ul>
-      <h3>Answers</h3>
+      <h3>Open source</h3>
       <p>
-        For question-like queries (and for a bare email address or a quoted name) the{' '}
-        <em>Search</em> tab also weaves a short written answer. It is built only from retrieved
-        material — pages in the index plus, when a web-search provider is configured, live pages
-        fetched at query time through the same robots / SSRF-guarded stack the crawler uses. Every
-        sentence is tied to a numbered source; each source carries a trust tier (official /
-        established / unverified reliability) and a fetch or index timestamp. Anything the sources
-        do not support is labelled <em>unverified</em>, and a confidence banner summarises how
-        well-grounded the answer is. With no LLM configured the answer is a deterministic weave of
-        source extracts; with <code>ANTHROPIC_API_KEY</code> (or an OpenAI-compatible endpoint) it
-        is written up in prose. All of it is optional.
+        MIT licensed. CLI (<code>beacon</code>) and MCP server (<code>beacon-mcp</code>) ship with
+        the same package.{' '}
+        <a href={SITE_REPO} target="_blank" rel="noreferrer">
+          Source on GitHub
+        </a>
+        .
       </p>
-      <h3>Number plate checker</h3>
+    </section>
+  );
+}
+
+function PrivacyView({ siteName }: { siteName: string }): JSX.Element {
+  return (
+    <section className="prose">
+      <h2>Privacy</h2>
       <p>
-        Typing <code>plate AB12CDE</code> into the universal box runs the same checks as the tool
-        under Settings: format, age, and region, plus DVLA vehicle data and DVSA MOT history when
-        those providers are configured. The card can set a reference date and save the check.
-        Offline checks need no credentials.
+        {siteName} is self-hosted software. What is logged or stored depends on how this instance is
+        configured by its operator — there is no Beacon Search cloud that receives your queries by
+        default.
       </p>
-      <h3>CLI &amp; MCP</h3>
+      <h3>On this device</h3>
+      <ul>
+        <li>
+          Search history and most UI preferences stay in your browser&apos;s{' '}
+          <code>localStorage</code> unless you clear them in Settings.
+        </li>
+        <li>You can turn off saving search history and shorten retention in Settings → Privacy.</li>
+      </ul>
+      <h3>On this server</h3>
+      <ul>
+        <li>The local search index is a JSON file on the host (or Docker volume).</li>
+        <li>
+          Optional live web / scholarly / Tor lookups send your query to those upstream services
+          only when those sources are enabled.
+        </li>
+        <li>
+          Optional LLM keys (Anthropic / OpenAI-compatible) are used only to rewrite answers from
+          retrieved sources — never required for search itself.
+        </li>
+      </ul>
+      <h3>Tor mode</h3>
       <p>
-        <code>beacon serve|add|import|crawl|search|stats</code>,{' '}
-        <code>beacon plate &quot;AB12 CDE&quot;</code>. An MCP server (<code>beacon-mcp</code>)
-        exposes the plate checker and the search index as tools for Claude and other MCP clients.
+        When Tor is on, onion search and `.onion` browsing go through the configured SOCKS5h proxy.
+        Exit behaviour follows Tor; the Beacon process still sees the query so it can search and
+        render results.
+      </p>
+      <h3>Operator note</h3>
+      <p>
+        If you run a public website, review <code>docs/website.md</code> and keep admin write routes
+        blocked (the public Caddyfile does this by default).
       </p>
     </section>
   );

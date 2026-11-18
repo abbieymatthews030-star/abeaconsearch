@@ -109,6 +109,7 @@ export interface HealthResponse {
   answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
   lookups: { enabled: boolean };
   tor?: { enabled: boolean; socksUrl: string };
+  site?: { name: string; url: string };
 }
 
 export interface TorStatusResponse {

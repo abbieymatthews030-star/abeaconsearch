@@ -1,6 +1,5 @@
 /** v2 (legacy, 16) and v3 (56) onion hostnames — base32 alphabet without padding. */
-const ONION_HOST =
-  /^(?:[a-z2-7]{56}|[a-z2-7]{16})\.onion$/i;
+const ONION_HOST = /^(?:[a-z2-7]{56}|[a-z2-7]{16})\.onion$/i;
 
 export function isOnionHostname(hostname: string): boolean {
   const bare = hostname.replace(/\.$/, '').toLowerCase();
