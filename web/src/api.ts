@@ -15,6 +15,7 @@ import type {
   AnswerConfidence,
   AnswerResponse,
   AnswerSource,
+  DeniedCategory,
   EntityMatchType,
   TrustTier,
 } from '@core/answer/types';
@@ -46,6 +47,7 @@ export type {
   AnswerSource,
   BeaconDocument,
   CalculationPrimary,
+  DeniedCategory,
   DomainLookup,
   DomainPrimary,
   EntityMatchType,

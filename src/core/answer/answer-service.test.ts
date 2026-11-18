@@ -52,9 +52,80 @@ describe('AnswerService', () => {
     const res = await service.answer('what is the airspeed of an unladen swallow');
     expect(res.confidence).toBe('none');
     expect(res.answer.length).toBeGreaterThan(0);
+    expect(res.denied).toBeFalsy();
     expect(res.disclaimer).toBeTruthy();
     expect(res.sources).toEqual([]);
     expect(res.warnings.join(' ')).toContain('web search is not configured');
+  });
+
+  it('denies only bestiality and violence-against-women queries', async () => {
+    const service = new AnswerService({
+      engine: engineWith([PENGUIN_DOC]),
+      config: answerConfig(),
+      userAgent: 'test',
+      webSearch: null,
+      synthesizers: [],
+    });
+    const denied = await service.answer('bestiality');
+    expect(denied.denied).toBe(true);
+    expect(denied.denyCategory).toBe('bestiality');
+    expect(denied.answer).toMatch(/cannot be answered/i);
+    expect(denied.sources).toEqual([]);
+
+    const vaw = await service.answer('violence against women');
+    expect(vaw.denied).toBe(true);
+    expect(vaw.denyCategory).toBe('physical_violence_against_women');
+
+    const allowed = await service.answer('ethical debate on drug legalization');
+    expect(allowed.denied).toBeFalsy();
+  });
+
+  it('generates an unverified knowledge answer when sources are missing but an LLM is configured', async () => {
+    const llm: LlmSynthesizer = {
+      name: 'StubLLM',
+      kind: 'llm-anthropic',
+      configured: true,
+      weave: vi.fn(async () => 'An unladen European swallow flies about 11 m/s.'),
+    };
+    const service = new AnswerService({
+      engine: engineWith([]),
+      config: answerConfig(),
+      userAgent: 'test',
+      webSearch: null,
+      synthesizers: [llm],
+    });
+    const res = await service.answer('what is the airspeed of an unladen swallow');
+    expect(llm.weave).toHaveBeenCalled();
+    expect(res.denied).toBeFalsy();
+    expect(res.synthesizer).toBe('llm-anthropic');
+    expect(res.answer).toMatch(/11 m\/s/);
+    expect(res.answer).toMatch(/Unverified/i);
+    expect(res.confidence).toBe('none');
+  });
+
+  it('retries when the LLM soft-refuses a grey-area topic', async () => {
+    const weave = vi
+      .fn()
+      .mockResolvedValueOnce("I'm sorry, but I can't help with that.")
+      .mockResolvedValueOnce('Psychedelic research expanded in the mid-20th century.');
+    const llm = {
+      name: 'StubLLM',
+      kind: 'llm-openai' as const,
+      configured: true,
+      weave,
+      weaveRetry: vi.fn(async () => 'Psychedelic research expanded in the mid-20th century.'),
+    };
+    const service = new AnswerService({
+      engine: engineWith([]),
+      config: answerConfig(),
+      userAgent: 'test',
+      webSearch: null,
+      synthesizers: [llm],
+    });
+    const res = await service.answer('history of psychedelic research');
+    expect(llm.weaveRetry).toHaveBeenCalled();
+    expect(res.denied).toBeFalsy();
+    expect(res.answer).toMatch(/Psychedelic research/i);
   });
 
   it('weaves index extracts deterministically when no LLM is configured', async () => {
@@ -116,6 +187,7 @@ describe('AnswerService', () => {
     const res = await service.answer('where do penguins live');
     expect(res.synthesizer).toBe('extractive');
     expect(res.warnings.join(' ')).toContain('StubLLM synthesis failed');
+    expect(res.answer.toLowerCase()).toContain('hemisphere');
   });
 
   it('serves a repeated query from cache', async () => {

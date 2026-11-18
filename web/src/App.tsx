@@ -854,11 +854,14 @@ function SearchView({
     Boolean(activeSource) ||
     facetTags.length > 0 ||
     facetSources.length > 0;
+  // Always show the answer card when we have prose — including knowledge
+  // fallbacks (confidence "none") and the narrow deny-list response.
   const answerHasProse = Boolean(
     answer &&
-    (answer.confidence !== 'none' ||
-      (answer.candidates?.length ?? 0) > 0 ||
-      answer.claims.length > 0),
+      (answer.denied ||
+        answer.answer.trim().length > 0 ||
+        (answer.candidates?.length ?? 0) > 0 ||
+        answer.claims.length > 0),
   );
   const showEmpty = Boolean(
     result && query.trim() && hits.length === 0 && !loading && !result.primary,
@@ -1857,12 +1860,17 @@ function AnswerCard({
       data-source-quality={data?.sourceQuality}
     >
       <div className="answer__head">
-        <span className="answer__tag">SOURCE-BACKED SUMMARY</span>
-        {data && <ConfidenceBadge confidence={data.confidence} />}
+        <span className="answer__tag">
+          {data?.denied ? 'QUERY NOT ANSWERED' : 'SOURCE-BACKED SUMMARY'}
+        </span>
+        {data && !data.denied && <ConfidenceBadge confidence={data.confidence} />}
+        {data?.denied && data.denyCategory && (
+          <span className="badge badge--muted">{data.denyCategory.replaceAll('_', ' ')}</span>
+        )}
         {data?.cached && <span className="badge badge--muted">cached</span>}
         {loading && <span className="search__updating" aria-hidden />}
         <span className="answer__spacer" />
-        {data && (
+        {data && !data.denied && (
           <>
             <button type="button" className="answer__refresh" onClick={copyAnswer}>
               {copyNote ?? 'Copy'}
