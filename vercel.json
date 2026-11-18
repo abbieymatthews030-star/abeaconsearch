@@ -1,11 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "fastify",
-  "installCommand": "npm ci",
-  "buildCommand": "rm -rf dist && npm run build:web",
-  "env": {
-    "BEACON_DATA_DIR": "/tmp/beacon-data",
-    "BEACON_HOST": "0.0.0.0",
-    "BEACON_WEB_DIR": "web/dist"
-  }
+  "services": {
+    "api": {
+      "root": ".",
+      "entrypoint": "Dockerfile.vercel",
+      "runtime": "container",
+      "framework": "container"
+    }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": { "service": "api" } }]
 }
