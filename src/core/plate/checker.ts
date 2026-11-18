@@ -169,19 +169,17 @@ export class PlateChecker {
       });
     }
 
-    // 6. Theft / finance — no free open API; guidance only -----------------
-    checks.push({
-      id: 'theft-finance',
-      label: 'Stolen / outstanding finance / write-off',
-      status: 'info',
-      detail:
-        'Not checked. These require a paid provider (e.g. an HPI-style check). The Police ' +
-        'Digital Service and DVLA do not expose a free API for this.',
-    });
+    // 6. Theft / finance — no free open API; guidance only (not a check line)
+    const notices: string[] = [
+      'Stolen / outstanding finance / write-off status was not checked — those need a paid provider (e.g. an HPI-style check).',
+    ];
 
     const pass = checks.filter((c) => c.status === 'pass').length;
     const warn = checks.filter((c) => c.status === 'warn').length;
     const fail = checks.filter((c) => c.status === 'fail').length;
+    const liveSkipped = checks.some(
+      (c) => (c.id === 'dvla-record' || c.id === 'mot-history') && c.status === 'skipped',
+    );
     const status: PlateCheck['summary']['status'] = !classification.valid
       ? 'invalid'
       : fail > 0
@@ -189,6 +187,11 @@ export class PlateChecker {
         : warn > 0
           ? 'attention'
           : 'ok';
+
+    const usedReference =
+      options.referenceDate && parsedRef && !Number.isNaN(parsedRef.getTime())
+        ? reference.toISOString()
+        : undefined;
 
     return {
       input,
@@ -203,13 +206,15 @@ export class PlateChecker {
       checks,
       summary: {
         status,
-        headline: this.headline(status, classification.valid, vehicle),
+        headline: this.headline(status, classification.valid, vehicle, liveSkipped),
         pass,
         warn,
         fail,
       },
       sources: [...sources],
-      checkedAt: reference.toISOString(),
+      checkedAt: this.now().toISOString(),
+      referenceDate: usedReference,
+      notices,
     };
   }
 
@@ -217,6 +222,7 @@ export class PlateChecker {
     status: PlateCheck['summary']['status'],
     valid: boolean,
     vehicle: VehicleRecord | null,
+    liveSkipped: boolean,
   ): string {
     if (!valid) return 'Not a valid UK registration mark';
     const desc = vehicle?.make
@@ -224,7 +230,11 @@ export class PlateChecker {
           vehicle.yearOfManufacture ? ` (${vehicle.yearOfManufacture})` : ''
         }`
       : 'Valid UK registration';
-    if (status === 'ok') return `${desc} — all checks passed`;
+    if (status === 'ok') {
+      return liveSkipped
+        ? `${desc} — offline checks passed (live vehicle data not run)`
+        : `${desc} — all checks passed`;
+    }
     if (status === 'attention') return `${desc} — needs attention`;
     return `${desc} — failed one or more checks`;
   }

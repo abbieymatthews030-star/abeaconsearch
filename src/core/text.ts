@@ -81,5 +81,9 @@ export function highlight(text: string, terms: string[]): string {
     .map(escapeRegExp)
     .join('|');
 
-  return escaped.replace(new RegExp(`(${pattern})`, 'giu'), '<mark>$1</mark>');
+  // Word-ish boundaries so "cat" does not highlight inside "category".
+  return escaped.replace(
+    new RegExp(`(?<![\\p{L}\\p{N}])(${pattern})(?![\\p{L}\\p{N}])`, 'giu'),
+    '<mark>$1</mark>',
+  );
 }

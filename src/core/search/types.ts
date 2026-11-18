@@ -17,7 +17,7 @@ export type SearchIntent =
   | 'general';
 
 /** What the search itself found. Distinct from whether a summary could be written. */
-export type SearchOutcome = 'results' | 'empty' | 'partial' | 'unconfigured';
+export type SearchOutcome = 'results' | 'empty' | 'partial' | 'unconfigured' | 'error';
 
 /** Whether the hits are enough to write a factual summary. Links can still be shown when this is `insufficient`. */
 export type SynthesisState = 'possible' | 'insufficient' | 'not_applicable';

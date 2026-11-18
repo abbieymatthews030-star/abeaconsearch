@@ -50,6 +50,16 @@ describe('PlateChecker (offline)', () => {
     expect(report.age?.approxYear).toBe(2012);
     expect(report.region).toMatchObject({ region: 'Anglia', office: 'Peterborough' });
     expect(report.checks.find((c) => c.id === 'dvla-record')?.status).toBe('skipped');
+    expect(report.summary.headline).toContain('live vehicle data not run');
+    expect(report.checks.find((c) => c.id === 'theft-finance')).toBeUndefined();
+    expect(report.notices.some((n) => /finance/i.test(n))).toBe(true);
+    expect(report.checkedAt).toBe(NOW().toISOString());
+  });
+
+  it('keeps referenceDate separate from checkedAt', async () => {
+    const report = await checker.check('AB12 CDE', { referenceDate: '2013-01-01T00:00:00Z' });
+    expect(report.referenceDate).toBe('2013-01-01T00:00:00.000Z');
+    expect(report.checkedAt).toBe(NOW().toISOString());
   });
 
   it('fails an unrecognised registration', async () => {

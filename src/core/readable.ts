@@ -33,7 +33,12 @@ export async function fetchHtml(url: string, options: FetchHtmlOptions): Promise
       return { error: `unsupported content-type "${contentType}"` };
     return { html: await response.text(), finalUrl: response.url || url };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    const timedOut =
+      (error instanceof Error && error.name === 'AbortError') || /aborted|abort/i.test(message);
+    return {
+      error: timedOut ? `timed out after ${timeoutMs}ms` : message,
+    };
   }
 }
 

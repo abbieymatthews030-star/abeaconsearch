@@ -142,6 +142,11 @@ export class AnswerService {
     }
   }
 
+  /** Drop cached answers (call when the local index mutates). */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
   private store(key: string, value: AnswerResponse): void {
     this.cache.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
     while (this.cache.size > CACHE_MAX) {
@@ -302,7 +307,9 @@ export class AnswerService {
     // --- Verify citations ------------------------------------------------
     const claims = sentinelHit ? [] : this.verify(prose, retrieved);
     const supported = claims.filter((c) => c.supported);
-    const cleanAnswer = claims.map((c) => c.text).join(' ');
+    const cleanAnswer = claims
+      .map((c) => (c.supported ? c.text : `${c.text} (unverified)`))
+      .join(' ');
     const unsupportedRatio = claims.length === 0 ? 1 : 1 - supported.length / claims.length;
 
     const citedIds = new Set(claims.flatMap((c) => c.sourceIds));
@@ -331,11 +338,12 @@ export class AnswerService {
     } else if (
       corroboration >= 2 &&
       hasOfficialOrEstablished &&
+      citedSources.some((s) => s.live) &&
       avgIdentity >= 0.9 &&
       unsupportedRatio === 0
     ) {
       confidence = 'high';
-      confidenceReason = `${corroboration} independent sources corroborate this, including a high-trust source`;
+      confidenceReason = `${corroboration} independent sources corroborate this, including a high-trust live fetch`;
     } else if (
       (corroboration >= 2 || hasOfficialOrEstablished) &&
       avgContentQuality >= 0.5 &&

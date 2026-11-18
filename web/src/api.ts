@@ -85,22 +85,26 @@ export interface SettingsEntry {
 }
 
 export interface DiagnosticsResponse {
-  status: 'ok';
+  status: 'ok' | 'degraded';
   uptimeSeconds: number;
   checkedAt: string;
   documents: number;
   tags: number;
   sources: number;
   lastPersistedAt: string | null;
+  lastPersistError?: string | null;
   providers: ProviderStatus[];
 }
 
 export type SearchSort = 'relevance' | 'newest' | 'oldest' | 'title';
 
 export interface HealthResponse {
-  status: 'ok';
+  status: 'ok' | 'degraded';
   documents: number;
+  indexEmpty?: boolean;
   uptimeSeconds: number;
+  lastPersistedAt?: string | null;
+  lastPersistError?: string | null;
   plateChecks: { vehicleData: boolean; motHistory: boolean };
   answer: { enabled: boolean; autoAnswer: boolean; webSearch: string | null; llm: string[] };
   lookups: { enabled: boolean };
@@ -124,8 +128,7 @@ function errorMessage(payload: unknown, status: number): string {
     error?: unknown;
   };
   const code = typeof body.error === 'string' ? body.error : '';
-  const base =
-    typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
+  const base = typeof body.message === 'string' ? body.message : `Request failed with ${status}`;
   const message = code === 'rate_limited' ? `${base} (rate limited)` : base;
 
   const parts: string[] = [];
@@ -148,12 +151,30 @@ function errorMessage(payload: unknown, status: number): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? `Network error: ${error.message}`
+        : 'Network error talking to the API',
+    );
+  }
   const text = await response.text();
-  const payload = text ? (JSON.parse(text) as unknown) : null;
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error(
+        `Request failed with ${response.status}${text ? `: ${text.slice(0, 160)}` : ''}`,
+      );
+    }
+  }
   if (!response.ok) {
     throw new Error(errorMessage(payload, response.status));
   }
@@ -217,11 +238,14 @@ export const api = {
   stats(): Promise<IndexStats> {
     return request<IndexStats>('/api/stats');
   },
-  documents(params: { limit?: number; offset?: number } = {}): Promise<DocumentsResponse> {
+  documents(
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<DocumentsResponse> {
     const qs = new URLSearchParams();
     if (params.limit) qs.set('limit', String(params.limit));
     if (params.offset) qs.set('offset', String(params.offset));
-    return request<DocumentsResponse>(`/api/documents?${qs.toString()}`);
+    return request<DocumentsResponse>(`/api/documents?${qs.toString()}`, { signal });
   },
   health(): Promise<HealthResponse> {
     return request<HealthResponse>('/api/health');
@@ -282,6 +306,8 @@ export const api = {
     documentsIndexed: number;
     errors: Array<{ url: string; error: string }>;
     skipped: Array<{ url: string; reason: string }>;
+    robotsStatus?: 'ok' | 'missing' | 'error' | 'disabled';
+    warnings?: string[];
   }> {
     return request('/api/crawl', { method: 'POST', body: JSON.stringify(input) });
   },

@@ -33,6 +33,9 @@ export interface CrawlResult {
   pages: DocumentInput[];
   errors: Array<{ url: string; error: string }>;
   skipped: Array<{ url: string; reason: string }>;
+  /** How robots.txt was resolved for this crawl. */
+  robotsStatus?: 'ok' | 'missing' | 'error' | 'disabled';
+  warnings?: string[];
 }
 
 const SKIP_EXTENSION =
@@ -83,9 +86,24 @@ export async function crawl(options: CrawlOptions, deps: CrawlDeps = {}): Promis
     };
   }
 
-  const robots = respectRobots
-    ? await fetchRobots(origin, options.userAgent, fetchImpl, options.timeoutMs)
-    : new RobotsRules('', options.userAgent);
+  const warnings: string[] = [];
+  let robots: RobotsRules;
+  let robotsStatus: CrawlResult['robotsStatus'];
+  if (respectRobots) {
+    const fetched = await fetchRobots(origin, options.userAgent, fetchImpl, options.timeoutMs);
+    robots = fetched.rules;
+    robotsStatus = fetched.status;
+    if (fetched.status === 'error') {
+      warnings.push(
+        'robots.txt unreachable; proceeding with allow-all (fail-open). Re-check the host if this is unexpected.',
+      );
+    } else if (fetched.status === 'missing') {
+      warnings.push('robots.txt missing or non-OK; proceeding with allow-all.');
+    }
+  } else {
+    robots = new RobotsRules('', options.userAgent);
+    robotsStatus = 'disabled';
+  }
 
   const result: CrawlResult = {
     startUrl: start.toString(),
@@ -93,6 +111,8 @@ export async function crawl(options: CrawlOptions, deps: CrawlDeps = {}): Promis
     pages: [],
     errors: [],
     skipped: [],
+    robotsStatus,
+    warnings,
   };
 
   const seen = new Set<string>([start.toString()]);

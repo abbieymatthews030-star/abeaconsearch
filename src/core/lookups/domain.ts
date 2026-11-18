@@ -29,12 +29,18 @@ export async function lookupDomain(
       notices.push('no A record');
       return [] as string[];
     }),
-    resolve6(domain).catch(() => [] as string[]),
+    resolve6(domain).catch(() => {
+      notices.push('no AAAA record');
+      return [] as string[];
+    }),
     resolveNs(domain).catch(() => {
       notices.push('no NS record');
       return [] as string[];
     }),
-    resolveMx(domain).catch(() => []),
+    resolveMx(domain).catch(() => {
+      notices.push('no MX record');
+      return [] as Awaited<ReturnType<typeof resolveMx>>;
+    }),
   ]);
 
   // RFC 7505 "null MX" (a lone root '.' target) decodes to an empty

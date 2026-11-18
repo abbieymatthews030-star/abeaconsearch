@@ -14,10 +14,7 @@ export interface IpLookup {
 }
 
 /** Reverse DNS + RDAP lookup for an IP address. No API key required; never throws. */
-export async function lookupIp(
-  ip: string,
-  opts: { timeoutMs?: number } = {},
-): Promise<IpLookup> {
+export async function lookupIp(ip: string, opts: { timeoutMs?: number } = {}): Promise<IpLookup> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_LOOKUP_TIMEOUT_MS;
   const notices: string[] = [];
 
@@ -35,7 +32,9 @@ export async function lookupIp(
     network = rdap.name;
     country = rdap.country;
     rdapHandle = rdap.handle;
-    const org = entityWithRole(rdap.entities, 'registrant') ?? entityWithRole(rdap.entities, 'administrative');
+    const org =
+      entityWithRole(rdap.entities, 'registrant') ??
+      entityWithRole(rdap.entities, 'administrative');
     organization = org ? vcardField(org.vcardArray, 'fn') : undefined;
   } else {
     notices.push('network data (RDAP) unavailable for this address');

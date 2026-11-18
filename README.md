@@ -56,6 +56,7 @@ search service or API keys are needed for the basic setup.
 
    Paste the output as `BEACON_PASSWORD_HASH` in `.env`. Keep `.env private; it
    is excluded from Git.
+
 4. Start the site:
 
    ```sh
@@ -111,6 +112,15 @@ available as `beacon`.
 
 ---
 
+## Naming
+
+| Surface             | Name                           |
+| ------------------- | ------------------------------ |
+| Product (UI, docs)  | **Beacon Search**              |
+| npm package         | `abeaconsearch`                |
+| CLI binary          | `beacon`                       |
+| MCP server id / bin | `beacon-search` / `beacon-mcp` |
+
 ## HTTP API
 
 | Method   | Path                  | Description                                          |
@@ -118,7 +128,13 @@ available as `beacon`.
 | `GET`    | `/api/health`         | Liveness + document count                            |
 | `GET`    | `/api/stats`          | Index statistics, top tags/sources                   |
 | `GET`    | `/api/search`         | `?q=&limit=&offset=&tags=&source=&fuzzy=&prefix=`    |
+| `GET`    | `/api/query`          | Universal box: classify + search + primary card      |
+| `GET`    | `/api/suggest`        | Autocomplete suggestions (`?q=&limit=`)              |
 | `GET`    | `/api/answer`         | Woven, cited answer for a query (`?q=&fresh=`)       |
+| `GET`    | `/api/settings`       | List runtime settings                                |
+| `PATCH`  | `/api/settings`       | Update runtime settings                              |
+| `GET`    | `/api/diagnostics`    | Health + provider probe snapshot                     |
+| `GET`    | `/api/providers`      | Configured source / provider status                  |
 | `GET`    | `/api/documents`      | List documents (`?limit=&offset=`)                   |
 | `GET`    | `/api/documents/:id`  | Fetch one document                                   |
 | `POST`   | `/api/documents`      | Create/replace a document                            |

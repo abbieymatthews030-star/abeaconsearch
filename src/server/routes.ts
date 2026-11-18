@@ -56,10 +56,14 @@ export function healthPayload(
   ctx: Pick<RouteContext, 'engine' | 'plateChecker' | 'answerService' | 'config'>,
 ) {
   const answerCaps = ctx.answerService?.capabilities;
+  const persistError = ctx.engine.lastPersistError;
   return {
-    status: 'ok' as const,
+    status: persistError ? ('degraded' as const) : ('ok' as const),
     documents: ctx.engine.size,
+    indexEmpty: ctx.engine.size === 0,
     uptimeSeconds: Math.round(process.uptime()),
+    lastPersistedAt: ctx.engine.lastPersistedAt,
+    lastPersistError: persistError,
     plateChecks: ctx.plateChecker.capabilities,
     answer: answerCaps
       ? {
@@ -80,7 +84,9 @@ class HttpError extends Error {
   }
 }
 
-function hasHttpStatus(error: unknown): error is { statusCode: number; message?: string; validation?: unknown } {
+function hasHttpStatus(
+  error: unknown,
+): error is { statusCode: number; message?: string; validation?: unknown } {
   return (
     typeof error === 'object' &&
     error !== null &&
@@ -102,7 +108,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     const codeFor = (status: number) =>
       status === 404 ? 'not_found' : status === 429 ? 'rate_limited' : 'request_error';
     if (error instanceof AnswerBusyError) {
-      reply.status(429).send({ error: 'rate_limited', message: error.message });
+      reply.status(503).send({ error: 'busy', message: error.message });
       return;
     }
     if (error instanceof HttpError) {
@@ -113,7 +119,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
     if (hasHttpStatus(error) && (error.validation || error.statusCode < 500)) {
       const status = error.statusCode ?? 400;
-      reply.status(status).send({ error: codeFor(status), message: error.message ?? 'Bad request' });
+      reply
+        .status(status)
+        .send({ error: codeFor(status), message: error.message ?? 'Bad request' });
       return;
     }
     request.log.error({ err: error }, 'unhandled error');
@@ -194,9 +202,12 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       .optional()
       .transform((v): 'auto' | 'off' | 'force' => {
         if (v === undefined) return 'auto';
-        if (typeof v === 'boolean') return v ? 'auto' : 'off';
+        // Boolean true / "true" / "on" / "1" mean "search the web", i.e. force —
+        // not auto (which often skips web when the local index already matched).
+        if (typeof v === 'boolean') return v ? 'force' : 'off';
         const s = v.trim().toLowerCase();
-        if (s === 'force') return 'force';
+        if (s === 'force' || s === 'true' || s === 'on' || s === '1') return 'force';
+        if (s === 'auto') return 'auto';
         if (FALSEY.has(s)) return 'off';
         return 'auto';
       });
@@ -214,16 +225,16 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       const query = universalQuerySchema.parse(request.query);
       const classified = classifyQuery(query.q);
 
-      const [envelope, primary] = await Promise.all([
-        runUniversalSearch({
-          query: query.q,
-          search: query,
-          engine,
-          config: config.answer,
-          web: query.web,
-        }),
-        resolvePrimary(classified, config, plateChecker, engine),
-      ]);
+      // Search first, then plate primary (which may upsert into the index) so
+      // this response never races a half-written plate-check document.
+      const envelope = await runUniversalSearch({
+        query: query.q,
+        search: query,
+        engine,
+        config: config.answer,
+        web: query.web,
+      });
+      const primary = await resolvePrimary(classified, config, plateChecker, engine);
 
       return { ...envelope, kind: classified.kind, primary };
     });
@@ -252,7 +263,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       const patch = settingsPatchSchema.parse(request.body);
       const { applied, errors } = await ctx.settings.update(patch);
       const errorIds = Object.keys(errors);
-      if (applied.length === 0 && errorIds.length > 0) {
+      if (errorIds.length > 0) {
         reply.status(400);
         return {
           error: 'validation_error',
@@ -292,15 +303,20 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     // --- Diagnostics ---------------------------------------------------------
     app.get('/diagnostics', async () => {
       const stats = engine.stats(config.indexFile);
+      const providers = listProviders(providerDeps, probeCache);
+      const providerError = providers.some((p) => p.status === 'error');
+      const persistError = engine.lastPersistError;
+      const status = persistError || providerError ? ('degraded' as const) : ('ok' as const);
       return {
-        status: 'ok' as const,
+        status,
         uptimeSeconds: Math.round(process.uptime()),
         checkedAt: new Date().toISOString(),
         documents: stats.documents,
         tags: stats.tags,
         sources: stats.sources,
         lastPersistedAt: stats.lastPersistedAt,
-        providers: listProviders(providerDeps, probeCache),
+        lastPersistError: persistError,
+        providers,
       };
     });
 
@@ -331,6 +347,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       const input = documentInputSchema.parse(request.body);
       const created = !input.id || !engine.has(input.id);
       const doc = engine.upsert(input);
+      await engine.flush();
       reply.status(created ? 201 : 200);
       return doc;
     });
@@ -338,12 +355,15 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
     app.put('/documents/:id', async (request) => {
       const { id } = idParam.parse(request.params);
       const body = documentInputSchema.omit({ id: true }).parse(request.body);
-      return engine.upsert({ ...body, id });
+      const doc = engine.upsert({ ...body, id });
+      await engine.flush();
+      return doc;
     });
 
     app.delete('/documents/:id', async (request, reply) => {
       const { id } = idParam.parse(request.params);
       if (!engine.remove(id)) throw new HttpError(404, `No document with id "${id}"`);
+      await engine.flush();
       reply.status(204);
       return null;
     });
@@ -415,6 +435,8 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
         documentsIndexed: result.pages.length,
         errors: result.errors,
         skipped: result.skipped,
+        robotsStatus: result.robotsStatus,
+        warnings: result.warnings ?? [],
       };
     });
   };

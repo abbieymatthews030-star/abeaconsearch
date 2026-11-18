@@ -167,7 +167,8 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
   {
     id: 'crawlAllowPrivateHosts',
     label: 'Allow crawling private hosts',
-    description: 'Lets crawling reach loopback/private addresses. Off is the safe default (SSRF guard).',
+    description:
+      'Lets crawling reach loopback/private addresses. Off is the safe default (SSRF guard).',
     type: 'toggle',
     section: 'advanced',
     advanced: true,
@@ -193,7 +194,8 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
   {
     id: 'answerEnabled',
     label: 'Answer engine',
-    description: 'Master switch for answer synthesis. Turning this on after it started disabled needs a restart.',
+    description:
+      'Master switch for answer synthesis. Turning this on after it started disabled needs a restart.',
     type: 'toggle',
     section: 'advanced',
     advanced: true,
@@ -206,7 +208,8 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
   {
     id: 'answerMaxSources',
     label: 'Maximum sources',
-    description: 'How many sources a single answer can cite. Higher values scrape more pages per answer.',
+    description:
+      'How many sources a single answer can cite. Higher values scrape more pages per answer.',
     type: 'number',
     min: 1,
     max: 50,
@@ -307,7 +310,8 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
   {
     id: 'answerAllowPrivateHosts',
     label: 'Allow answer fetches to private hosts',
-    description: 'Lets answer synthesis fetch loopback/private URLs. Off is the safe default (SSRF guard).',
+    description:
+      'Lets answer synthesis fetch loopback/private URLs. Off is the safe default (SSRF guard).',
     type: 'toggle',
     section: 'advanced',
     advanced: true,
@@ -431,7 +435,10 @@ export class RuntimeSettingsStore {
         'settings overlay loaded',
       );
     } catch (error) {
-      this.logger?.error({ err: error, file: this.file }, 'failed to load settings overlay; using defaults');
+      this.logger?.error(
+        { err: error, file: this.file },
+        'failed to load settings overlay; using defaults',
+      );
     }
   }
 

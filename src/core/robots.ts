@@ -67,21 +67,30 @@ export class RobotsRules {
   }
 }
 
+export type RobotsFetchStatus = 'ok' | 'missing' | 'error';
+
+export interface RobotsFetchResult {
+  rules: RobotsRules;
+  status: RobotsFetchStatus;
+}
+
 export async function fetchRobots(
   origin: string,
   userAgent: string,
   fetchImpl: typeof fetch,
   timeoutMs: number,
-): Promise<RobotsRules> {
+): Promise<RobotsFetchResult> {
   try {
     const response = await fetchWithTimeout(`${origin}/robots.txt`, {
       headers: { 'user-agent': userAgent },
       timeoutMs,
       fetchImpl,
     });
-    if (!response.ok) return new RobotsRules('', userAgent);
-    return new RobotsRules(await response.text(), userAgent);
+    if (!response.ok) {
+      return { rules: new RobotsRules('', userAgent), status: 'missing' };
+    }
+    return { rules: new RobotsRules(await response.text(), userAgent), status: 'ok' };
   } catch {
-    return new RobotsRules('', userAgent);
+    return { rules: new RobotsRules('', userAgent), status: 'error' };
   }
 }

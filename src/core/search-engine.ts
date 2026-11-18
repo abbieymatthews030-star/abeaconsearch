@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import MiniSearch from 'minisearch';
 import { highlight, makeSnippet, normalizeWhitespace, slugify, tokenize } from './text.js';
 import { roundMs } from './timing.js';
@@ -248,13 +249,11 @@ export class SearchEngine {
     switch (sort) {
       case 'newest':
         return [...ranked].sort(
-          (a, b) =>
-            b.doc.updatedAt.localeCompare(a.doc.updatedAt) || seq(b.doc.id) - seq(a.doc.id),
+          (a, b) => b.doc.updatedAt.localeCompare(a.doc.updatedAt) || seq(b.doc.id) - seq(a.doc.id),
         );
       case 'oldest':
         return [...ranked].sort(
-          (a, b) =>
-            a.doc.updatedAt.localeCompare(b.doc.updatedAt) || seq(a.doc.id) - seq(b.doc.id),
+          (a, b) => a.doc.updatedAt.localeCompare(b.doc.updatedAt) || seq(a.doc.id) - seq(b.doc.id),
         );
       case 'title':
         return [...ranked].sort((a, b) => a.doc.title.localeCompare(b.doc.title));
@@ -273,13 +272,30 @@ export class SearchEngine {
    * suggestion, which reads as garbled rather than a spelling correction.
    */
   private didYouMean(q: string): string | undefined {
-    const query = q.trim().toLowerCase();
-    const [top] = topTermsFromSearch(
-      this.mini.search(q, { prefix: false, fuzzy: FUZZY_FACTOR }),
-      (term) => term.toLowerCase() !== query,
-      1,
-    );
-    return top;
+    const tokens = tokenize(q);
+    if (tokens.length === 0) return undefined;
+    if (tokens.length === 1) {
+      const query = tokens[0]!;
+      const [top] = topTermsFromSearch(
+        this.mini.search(query, { prefix: false, fuzzy: FUZZY_FACTOR }),
+        (term) => term.toLowerCase() !== query,
+        1,
+      );
+      return top;
+    }
+    // Multi-word: rewrite only the first token that has a nearby spelling, keep the rest.
+    let changed = false;
+    const rewritten = tokens.map((token) => {
+      const [top] = topTermsFromSearch(
+        this.mini.search(token, { prefix: false, fuzzy: FUZZY_FACTOR }),
+        (term) => term.toLowerCase() !== token,
+        1,
+      );
+      if (!top || changed) return token;
+      changed = true;
+      return top;
+    });
+    return changed ? rewritten.join(' ') : undefined;
   }
 
   /**
@@ -318,7 +334,8 @@ export class SearchEngine {
       sources: sourceCounts.size,
       topTags: top(tagCounts).map(([tag, count]) => ({ tag, count })),
       topSources: top(sourceCounts).map(([source, count]) => ({ source, count })),
-      indexFile,
+      // Basename only — absolute paths on an unauthenticated stats endpoint feel like a leak.
+      indexFile: path.basename(indexFile),
       lastPersistedAt: this.lastPersistedAt,
     };
   }
