@@ -1,4 +1,7 @@
 import type { SearchResponse } from '../types.js';
+import type { SourceType } from './source-type.js';
+
+export type { SourceType } from './source-type.js';
 
 /** Shared search-envelope types. Safe to import from the web UI. */
 
@@ -22,6 +25,9 @@ export type SearchOutcome = 'results' | 'empty' | 'partial' | 'unconfigured' | '
 /** Whether the hits are enough to write a factual summary. Links can still be shown when this is `insufficient`. */
 export type SynthesisState = 'possible' | 'insufficient' | 'not_applicable';
 
+/** `deep` also fans out to long-tail archives / forums / indie indexes. */
+export type SearchMode = 'normal' | 'deep';
+
 export interface DisplayHit {
   id: string;
   /** Highlighted HTML, safe to inject: only `<mark>` tags are added. */
@@ -36,6 +42,10 @@ export interface DisplayHit {
   tags: string[];
   /** Index `updatedAt`, when this hit came from a stored document. Absent for live web hits. */
   updatedAt?: string;
+  /** Coarse publisher kind for filtering and badges. */
+  sourceType?: SourceType;
+  /** Why this hit ranked where it did after the indie/primary-aware rerank. */
+  rankReasons?: string[];
 }
 
 export interface SearchDiagnostic {
@@ -61,6 +71,8 @@ export interface SearchEnvelope {
   intent: SearchIntent;
   outcome: SearchOutcome;
   synthesis: SynthesisState;
+  /** `deep` includes long-tail providers (Wayback, Common Crawl, HN, Reddit, Marginalia). */
+  mode: SearchMode;
   local: SearchResponse;
   results: DisplayHit[];
   total: number;
@@ -71,4 +83,8 @@ export interface SearchEnvelope {
   queriesTried: string[];
   diagnostics: SearchDiagnostic[];
   actions: SearchAction[];
+  /** Suggested query rewrites when results are thin or every provider failed. */
+  rewrites: string[];
+  /** Counts of source types across the full (unpaginated) result set. */
+  sourceTypeFacets: Partial<Record<SourceType, number>>;
 }

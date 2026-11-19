@@ -2,14 +2,18 @@ import * as cheerio from 'cheerio';
 import { DEFAULT_USER_AGENT, type AnswerConfig } from '../../config.js';
 import { fetchWithTimeout } from '../../http.js';
 import { createDeepKeylessProviders } from './deep-web.js';
+import { createLongtailProviders } from './longtail-web.js';
 
 export interface WebProviderSpec {
   id: string;
   label: string;
   missingEnv: string[];
   provider: WebSearchProvider | null;
-  /** `fast` for everyday search; `deep` for scholarly / archive sources. */
-  tier: 'fast' | 'deep';
+  /**
+   * `fast` for everyday search; `deep` for scholarly / archive sources;
+   * `longtail` for deep-mode Wayback / Common Crawl / HN / Reddit / Marginalia.
+   */
+  tier: 'fast' | 'deep' | 'longtail';
 }
 
 export interface WebResult {
@@ -375,6 +379,14 @@ export function describeWebProviders(
   const duckduckgo = new DuckDuckGoProvider(providerConfig);
   const wikipedia = new WikipediaProvider(providerConfig);
   const deep = createDeepKeylessProviders(providerConfig);
+  const longtail = createLongtailProviders(
+    {
+      timeoutMs: config.fetchTimeoutMs,
+      fetchImpl,
+      marginaliaApiKey: config.longtail.marginaliaApiKey,
+    },
+    config.longtail,
+  );
   const keylessMissing = ['BEACON_KEYLESS_WEB_SEARCH=1'];
   return [
     {
@@ -418,6 +430,13 @@ export function describeWebProviders(
       missingEnv: keylessMissing,
       provider: keyless ? provider : null,
       tier: 'deep' as const,
+    })),
+    ...longtail.map((provider) => ({
+      id: provider.name.toLowerCase().replace(/\s+/g, '_'),
+      label: provider.name,
+      missingEnv: keylessMissing,
+      provider: keyless ? provider : null,
+      tier: 'longtail' as const,
     })),
   ];
 }
