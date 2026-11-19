@@ -706,7 +706,7 @@ const de: CountryDefinition = {
     }
     return {
       age: null,
-      region: regionOf(city, `Distinguishing sign ${city}`, city, city),
+      region: regionOf(city, `Distinguishing sign ${city}`, city),
       notices,
     };
   },

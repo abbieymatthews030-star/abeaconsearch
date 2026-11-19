@@ -76,6 +76,7 @@ describe('country format checks', () => {
     expect(report.valid).toBe(true);
     expect(report.format).toBe('de-standard');
     expect(report.region?.memoryTag).toBe('B');
+    expect(report.region?.region).toBe('Distinguishing sign B');
     expect(report.formatted).toBe('B AB 1234');
   });
 

@@ -2383,9 +2383,7 @@ function PlateReport({ report }: { report: PlateCheck }): JSX.Element {
         {report.region && (
           <div>
             <dt>Region</dt>
-            <dd>
-              {report.region.office}, {report.region.region} ({report.region.country})
-            </dd>
+            <dd>{formatPlateRegion(report.region)}</dd>
           </div>
         )}
         {report.vehicle && (
@@ -2456,6 +2454,14 @@ function referenceIso(date: string): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
+/** Deduplicate office / region / subdivision labels for the facts strip. */
+function formatPlateRegion(region: NonNullable<PlateCheck['region']>): string {
+  const unique = [...new Set([region.office, region.region, region.country].filter(Boolean))];
+  if (unique.length <= 1) return unique[0] ?? '';
+  if (unique.length === 2) return `${unique[0]}, ${unique[1]}`;
+  return `${unique[0]}, ${unique[1]} (${unique[2]})`;
+}
+
 function usePlateCountries(): {
   countries: PlateCountryInfo[];
   defaultCountry: string;
@@ -2508,6 +2514,7 @@ function PlateOptions({
   mot,
   index,
   referenceDate,
+  showCountrySelect = true,
   onCountry,
   onVehicle,
   onMot,
@@ -2520,6 +2527,8 @@ function PlateOptions({
   mot: boolean;
   index: boolean;
   referenceDate: string;
+  /** Hide when the parent form already shows a country select (avoids duplicates). */
+  showCountrySelect?: boolean;
   onCountry: (value: string) => void;
   onVehicle: (value: boolean) => void;
   onMot: (value: boolean) => void;
@@ -2532,20 +2541,22 @@ function PlateOptions({
 
   return (
     <div className="plate__opts">
-      <label className="plate__country">
-        Country
-        <select
-          value={country}
-          onChange={(e) => onCountry(e.target.value)}
-          aria-label="Plate country"
-        >
-          {countries.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.name} ({c.code})
-            </option>
-          ))}
-        </select>
-      </label>
+      {showCountrySelect && (
+        <label className="plate__country">
+          Country
+          <select
+            value={country}
+            onChange={(e) => onCountry(e.target.value)}
+            aria-label="Plate country"
+          >
+            {countries.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name} ({c.code})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         <input
           type="checkbox"
@@ -2763,6 +2774,7 @@ function PlateView({
         mot={mot}
         index={index}
         referenceDate={referenceDate}
+        showCountrySelect={false}
         onCountry={setCountry}
         onVehicle={setVehicle}
         onMot={setMot}
