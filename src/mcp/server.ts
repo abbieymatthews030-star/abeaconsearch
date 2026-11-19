@@ -1,10 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Config } from '../core/config.js';
-import { decodeAge } from '../core/plate/age.js';
-import { classifyPlate, formatPlate, normalizePlate } from '../core/plate/format.js';
+import { resolveCountry } from '../core/plate/countries/index.js';
+import { normalizePlate } from '../core/plate/format.js';
 import { createPlateChecker } from '../core/plate/index.js';
-import { lookupMemoryTag } from '../core/plate/regions.js';
 import { BeaconClient } from './beacon-client.js';
 
 export interface BuildMcpServerOptions {
@@ -51,36 +50,44 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     { name: 'beacon-search', version },
     {
       instructions:
-        'Tools for UK number-plate analysis (offline format/age/region plus optional ' +
-        'DVLA and DVSA lookups) and for searching / adding documents in a running ' +
-        'Beacon Search instance.',
+        'Tools for worldwide number-plate analysis (offline format/age/region by country, ' +
+        'plus optional UK DVLA and DVSA lookups) and for searching / adding documents in a ' +
+        'running Beacon Search instance.',
     },
   );
 
   const plateArg = z
     .string()
     .min(1)
-    .max(16)
-    .describe('A UK vehicle registration mark, e.g. "AB12 CDE"');
+    .max(24)
+    .describe('A vehicle registration mark, e.g. "AB12 CDE" or "AB-123-CD"');
+
+  const countryArg = z
+    .string()
+    .min(2)
+    .max(32)
+    .optional()
+    .describe('ISO 3166-1 alpha-2 country code (default GB). Examples: GB, US, DE, FR, AU, IE');
 
   server.registerTool(
     'check_number_plate',
     {
-      title: 'Check a UK number plate',
+      title: 'Check a number plate',
       description:
-        'Run all automatic checks on a registration mark: format validation, age identifier, ' +
-        'region of registration, and (when API credentials are configured) DVLA tax/MOT status ' +
-        'and DVSA MOT history. Returns a structured report with per-check pass/warn/fail status.',
+        'Run automatic checks on a registration mark for a selected country: format validation, ' +
+        'age/region decode where the national system encodes them, and (for GB, when credentials ' +
+        'are configured) DVLA tax/MOT status and DVSA MOT history.',
       inputSchema: {
         plate: plateArg,
+        country: countryArg,
         includeVehicleData: z
           .boolean()
           .optional()
-          .describe('Query the DVLA Vehicle Enquiry Service (default true)'),
+          .describe('Query live vehicle data when the country supports it (GB: DVLA VES)'),
         includeMotHistory: z
           .boolean()
           .optional()
-          .describe('Query the DVSA MOT History API (default true)'),
+          .describe('Query inspection history when supported (GB: DVSA MOT)'),
         referenceDate: z
           .string()
           .datetime()
@@ -91,6 +98,7 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     async (args) => {
       try {
         const check = await checker.check(args.plate, {
+          country: args.country,
           includeVehicleData: args.includeVehicleData,
           includeMotHistory: args.includeMotHistory,
           referenceDate: args.referenceDate,
@@ -103,20 +111,38 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
   );
 
   server.registerTool(
+    'list_plate_countries',
+    {
+      title: 'List plate countries',
+      description:
+        'List jurisdictions the plate checker supports, with examples and whether live vehicle ' +
+        'or inspection APIs are wired.',
+      inputSchema: {},
+    },
+    async () =>
+      ok({
+        defaultCountry: checker.capabilities.defaultCountry,
+        countries: checker.capabilities.countries,
+      }),
+  );
+
+  server.registerTool(
     'validate_plate_format',
     {
       title: 'Validate plate format',
       description:
-        'Offline check of whether a string is a structurally valid UK registration mark.',
-      inputSchema: { plate: plateArg },
+        'Offline check of whether a string is a structurally valid registration mark for a country.',
+      inputSchema: { plate: plateArg, country: countryArg },
     },
     async (args) => {
+      const country = resolveCountry(args.country);
       const normalized = normalizePlate(args.plate);
-      const classification = classifyPlate(normalized);
+      const classification = country.classify(normalized);
       return ok({
         input: args.plate,
+        country: { code: country.code, name: country.name },
         normalized,
-        formatted: formatPlate(normalized, classification.format),
+        formatted: country.formatDisplay(normalized, classification.format),
         ...classification,
       });
     },
@@ -127,16 +153,24 @@ export function buildMcpServer(options: BuildMcpServerOptions): McpServer {
     {
       title: 'Decode plate age and region',
       description:
-        'Offline decode of a plate: the registration date range from the age identifier and the ' +
-        'DVLA office / region from the memory tag. No external calls.',
-      inputSchema: { plate: plateArg },
+        'Offline decode of a plate for a country: age / series identifiers and region / office ' +
+        'codes where the national system encodes them. No external calls.',
+      inputSchema: { plate: plateArg, country: countryArg },
     },
     async (args) => {
+      const country = resolveCountry(args.country);
       const normalized = normalizePlate(args.plate);
-      const { format, valid } = classifyPlate(normalized);
-      const age = decodeAge(normalized, format, new Date());
-      const region = format === 'current' ? lookupMemoryTag(normalized.slice(0, 2)) : null;
-      return ok({ normalized, format, valid, age, region });
+      const { format, valid } = country.classify(normalized);
+      const decoded = country.decode(normalized, format, new Date());
+      return ok({
+        country: { code: country.code, name: country.name },
+        normalized,
+        format,
+        valid,
+        age: decoded.age,
+        region: decoded.region,
+        notices: decoded.notices,
+      });
     },
   );
 

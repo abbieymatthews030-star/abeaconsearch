@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import type { DomainLookup } from './lookups/domain.js';
 import type { IpLookup } from './lookups/ip.js';
+import { isKnownCountryCode } from './plate/countries/index.js';
 import type { PlateCheck } from './plate/types.js';
 import { CALCULATION_RE, DOMAIN_RE, PLATE_RE } from './query-patterns.js';
 import type { SearchEnvelope } from './search/types.js';
@@ -11,6 +12,8 @@ export type QueryKind = 'domain' | 'ip' | 'calculation' | 'plate' | 'general';
 export interface ClassifiedQuery {
   kind: QueryKind;
   value: string;
+  /** ISO country code when the query is `plate <CC> <reg>`. */
+  country?: string;
 }
 
 /**
@@ -20,6 +23,16 @@ export interface ClassifiedQuery {
  */
 export function classifyQuery(raw: string): ClassifiedQuery {
   const q = raw.trim();
+
+  // `plate FR AB-123-CD` or `plate AB12CDE` (country optional)
+  const plateWithCountry = /^plate\s+([A-Za-z]{2})\s+(\S+)/i.exec(q);
+  if (plateWithCountry && isKnownCountryCode(plateWithCountry[1]!)) {
+    return {
+      kind: 'plate',
+      value: plateWithCountry[2]!,
+      country: plateWithCountry[1]!.toUpperCase(),
+    };
+  }
 
   const plateMatch = /^plate\s+(\S+)/i.exec(q);
   if (plateMatch || PLATE_RE.test(q)) {

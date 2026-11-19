@@ -1,13 +1,25 @@
-/** UK vehicle registration mark (VRM / "number plate") analysis types. */
+/** Vehicle registration mark / number plate analysis types (worldwide). */
 
+/**
+ * Format id for a recognised plate pattern. UK-era ids (`current`, `prefix`,
+ * …) are kept for backward compatibility when the country is GB; other
+ * countries use ids like `fr-siv`, `us-general`, `ie-current`.
+ */
 export type PlateFormat =
-  | 'current' // 2001–present: AA00 AAA
-  | 'prefix' // 1983–2001: A000 AAA
-  | 'suffix' // 1963–1983: AAA 000A
-  | 'dateless' // pre-1963 and cherished marks
-  | 'northern-ireland' // AAA 0000 (contains I or Z)
-  | 'diplomatic' // 000 A 000
-  | 'unknown';
+  | 'current' // GB 2001–present: AA00 AAA
+  | 'prefix' // GB 1983–2001: A000 AAA
+  | 'suffix' // GB 1963–1983: AAA 000A
+  | 'dateless' // GB pre-1963 and cherished marks
+  | 'northern-ireland' // GB/NI AAA 0000 (contains I or Z)
+  | 'diplomatic' // GB 000 A 000
+  | 'unknown'
+  | (string & {});
+
+export interface PlateClassification {
+  format: PlateFormat;
+  valid: boolean;
+  reason?: string;
+}
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'info' | 'skipped';
 
@@ -30,10 +42,21 @@ export interface PlateAge {
 }
 
 export interface PlateRegion {
+  /** Area / memory / issuer / district code when known. */
   memoryTag: string;
   region: string;
   office: string;
-  country: 'England' | 'Wales' | 'Scotland' | 'Northern Ireland' | 'Unknown';
+  /**
+   * Subdivision within the selected country — e.g. England/Wales for GB,
+   * a US state name when known, an Irish county, a German city code label.
+   */
+  country: string;
+}
+
+/** Selected issuing country for a plate check. */
+export interface PlateCountryRef {
+  code: string;
+  name: string;
 }
 
 export interface VehicleRecord {
@@ -88,9 +111,14 @@ export interface MotSummary {
 }
 
 export interface PlateCheckOptions {
-  /** Query the DVLA Vehicle Enquiry Service (needs an API key). */
+  /**
+   * ISO 3166-1 alpha-2 country code (or a known alias such as UK → GB).
+   * Defaults to GB (United Kingdom).
+   */
+  country?: string;
+  /** Query a live vehicle record when the country supports it (GB: DVLA VES). */
   includeVehicleData?: boolean;
-  /** Query the DVSA MOT history API (needs client credentials). */
+  /** Query inspection history when supported (GB: DVSA MOT). */
   includeMotHistory?: boolean;
   /** Evaluate the plate as if registered/checked on this date (ISO). */
   referenceDate?: string;
@@ -102,6 +130,8 @@ export interface PlateCheck {
   formatted: string;
   valid: boolean;
   format: PlateFormat;
+  /** Country the check was run against. */
+  country: PlateCountryRef;
   age: PlateAge | null;
   region: PlateRegion | null;
   vehicle: VehicleRecord | null;
@@ -109,7 +139,7 @@ export interface PlateCheck {
   checks: CheckItem[];
   summary: {
     /**
-     * `invalid` — not a valid UK registration mark.
+     * `invalid` — not a valid registration mark for the selected country.
      * `fail` — valid mark, but a check failed (e.g. untaxed, MOT expired).
      * `attention` — valid mark with warnings only.
      * `ok` — valid mark, everything that ran passed.

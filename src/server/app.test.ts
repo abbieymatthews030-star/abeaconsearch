@@ -297,10 +297,37 @@ describe('HTTP API', () => {
     const body = res.json();
     expect(body.valid).toBe(true);
     expect(body.format).toBe('current');
+    expect(body.country).toEqual({ code: 'GB', name: 'United Kingdom' });
     expect(body.region.office).toBe('Wimbledon');
     expect(body.summary.status).toBe('ok');
     const vehicleCheck = body.checks.find((c: { id: string }) => c.id === 'dvla-record');
     expect(vehicleCheck.status).toBe('skipped');
+  });
+
+  it('lists plate countries and checks a non-UK plate', async () => {
+    const list = await app.inject({ method: 'GET', url: '/api/plate/countries' });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().defaultCountry).toBe('GB');
+    expect(list.json().countries.some((c: { code: string }) => c.code === 'FR')).toBe(true);
+
+    const fr = await app.inject({
+      method: 'POST',
+      url: '/api/plate/check',
+      payload: { plate: 'AB-123-CD', country: 'FR', vehicle: false, mot: false },
+    });
+    expect(fr.statusCode).toBe(200);
+    expect(fr.json()).toMatchObject({
+      valid: true,
+      format: 'fr-siv',
+      country: { code: 'FR', name: 'France' },
+    });
+
+    const badCountry = await app.inject({
+      method: 'POST',
+      url: '/api/plate/check',
+      payload: { plate: 'AB12CDE', country: 'ZZ' },
+    });
+    expect(badCountry.statusCode).toBe(400);
   });
 
   it('rejects a malformed plate as invalid, not "fail"', async () => {

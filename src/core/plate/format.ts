@@ -1,8 +1,20 @@
-import type { PlateFormat } from './types.js';
+import type { PlateClassification, PlateFormat } from './types.js';
 
-/** Strip spaces/punctuation and upper-case a registration mark. */
+export type { PlateClassification } from './types.js';
+
+/**
+ * Strip spaces/punctuation and upper-case a registration mark.
+ * Common Latin transcriptions of German umlauts are folded so DE plates
+ * typed without diacritics still normalise cleanly.
+ */
 export function normalizePlate(input: string): string {
-  return input.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return input
+    .toUpperCase()
+    .replace(/Ä/g, 'AE')
+    .replace(/Ö/g, 'OE')
+    .replace(/Ü/g, 'UE')
+    .replace(/ß/g, 'SS')
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 const CURRENT_RE = /^[A-HJ-PR-Y]{2}[0-9]{2}[A-HJ-PR-Z]{3}$/;
@@ -15,12 +27,6 @@ const DATELESS_RES = [
   /^[A-Z]{1,3}[0-9]{1,4}$/, // ABC 1 / AB 1234
   /^[A-Z]{1,2}[0-9]{1,4}[A-Z]?$/,
 ];
-
-export interface PlateClassification {
-  format: PlateFormat;
-  valid: boolean;
-  reason?: string;
-}
 
 function looksNorthernIreland(plate: string): boolean {
   const letters = plate.replace(/[0-9]/g, '');
