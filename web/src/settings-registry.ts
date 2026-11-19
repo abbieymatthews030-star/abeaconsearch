@@ -242,6 +242,16 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     ],
   },
   {
+    id: 'deepMode',
+    section: 'search',
+    label: 'Deep search mode',
+    description:
+      'Also query long-tail sources: Wayback Machine, Common Crawl, Hacker News, Reddit, and Marginalia. Slower, but surfaces forums, archives, and small independent sites.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: false,
+  },
+  {
     id: 'citationsVisible',
     section: 'ai',
     label: 'Show citations',

@@ -673,6 +673,7 @@ function SearchView({
   const prefix = clientSettings.values.prefix !== false;
   const webModeRaw = String(clientSettings.values.webMode ?? 'auto');
   const webMode = webModeRaw === 'off' || webModeRaw === 'force' ? webModeRaw : 'auto';
+  const deepMode = clientSettings.values.deepMode === true;
   const torMode = clientSettings.values.torMode === true;
   const directAnswers = health?.answer.autoAnswer ?? true;
   const citationsVisible = clientSettings.values.citationsVisible !== false;
@@ -681,6 +682,9 @@ function SearchView({
 
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [activeSource, setActiveSource] = useState<string | undefined>();
+  const [activeSourceType, setActiveSourceType] = useState<
+    'forum' | 'archive' | 'official' | 'news' | 'blog' | 'academic' | undefined
+  >();
   const [sort, setSort] = useState<SearchSort>(freshness ? 'newest' : 'relevance');
   const [forceWeb, setForceWeb] = useState(false);
   const [page, setPage] = useState(0);
@@ -783,6 +787,7 @@ function SearchView({
     query,
     activeTags,
     activeSource,
+    activeSourceType,
     sort,
     searchMode,
     fuzzy,
@@ -791,6 +796,7 @@ function SearchView({
     torMode,
     forceWeb,
     webMode,
+    deepMode,
   ]);
 
   useEffect(() => {
@@ -828,6 +834,8 @@ function SearchView({
           prefix,
           web: webParam,
           tor: torMode || undefined,
+          mode: deepMode ? 'deep' : undefined,
+          sourceType: activeSourceType,
         },
         controller.signal,
       )
@@ -855,8 +863,10 @@ function SearchView({
     allowPartialMatch,
     prefix,
     activeSource,
+    activeSourceType,
     forceWeb,
     webMode,
+    deepMode,
     torMode,
     retryNonce,
   ]);
@@ -931,6 +941,24 @@ function SearchView({
     [local],
   );
 
+  const facetSourceTypes = useMemo(
+    () =>
+      result?.sourceTypeFacets
+        ? Object.entries(result.sourceTypeFacets)
+            .filter((row): row is [string, number] => typeof row[1] === 'number')
+            .sort((a, b) => b[1] - a[1])
+        : [],
+    [result?.sourceTypeFacets],
+  );
+
+  const failedProviders = useMemo(
+    () =>
+      (result?.diagnostics ?? []).filter(
+        (item) => item.status === 'error' && item.id !== 'local_index',
+      ),
+    [result?.diagnostics],
+  );
+
   const toggleTag = (tag: string) =>
     setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
 
@@ -944,8 +972,10 @@ function SearchView({
     (result?.total ?? 0) > 1 ||
     activeTags.length > 0 ||
     Boolean(activeSource) ||
+    Boolean(activeSourceType) ||
     facetTags.length > 0 ||
-    facetSources.length > 0;
+    facetSources.length > 0 ||
+    facetSourceTypes.length > 0;
   // Always show the answer card when we have prose — including knowledge
   // fallbacks (confidence "none") and the narrow deny-list response.
   const answerHasProse = Boolean(
@@ -1061,6 +1091,17 @@ function SearchView({
       <button type="submit" className="search__submit" disabled={!input.trim()}>
         Search
       </button>
+      {!torMode && (
+        <button
+          type="button"
+          className={deepMode ? 'chip chip--active search__deep' : 'chip search__deep'}
+          aria-pressed={deepMode}
+          title="Also search Wayback, Common Crawl, Hacker News, Reddit, and Marginalia"
+          onClick={() => clientSettings.setValue('deepMode', !deepMode)}
+        >
+          {deepMode ? 'Deep on' : 'Deep'}
+        </button>
+      )}
       {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
         <ul className="suggest" role="listbox" id="search-suggest-list">
           {suggestions.map((s, i) => (
@@ -1240,6 +1281,33 @@ function SearchView({
               ))}
             </div>
           )}
+
+          {facetSourceTypes.length > 0 && (
+            <div className="chips chips--facets" aria-label="Source types">
+              {facetSourceTypes.map(([type, count]) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={activeSourceType === type ? 'chip chip--active' : 'chip'}
+                  onClick={() =>
+                    setActiveSourceType((prev) =>
+                      prev === type
+                        ? undefined
+                        : (type as
+                            | 'forum'
+                            | 'archive'
+                            | 'official'
+                            | 'news'
+                            | 'blog'
+                            | 'academic'),
+                    )
+                  }
+                >
+                  {type} <span className="chip__count">{formatCount(count, region)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1266,6 +1334,9 @@ function SearchView({
             )}
             {(showResultMeta || (showResultTags && hit.tags.length > 0)) && (
               <div className="result__foot">
+                {showResultMeta && hit.sourceType && (
+                  <span className="result__source">{hit.sourceType}</span>
+                )}
                 {showResultMeta && (
                   <span className="result__source">
                     {torMode || hit.tags.includes('onion')
@@ -1291,6 +1362,11 @@ function SearchView({
                   ))}
               </div>
             )}
+            {showResultMeta && hit.rankReasons && hit.rankReasons.length > 0 && (
+              <p className="result__rank-reasons">
+                Ranked for: {hit.rankReasons.join(' · ')}
+              </p>
+            )}
           </li>
         ))}
       </ol>
@@ -1303,11 +1379,29 @@ function SearchView({
                 <strong>No good matches for “{query.trim()}”.</strong>
                 <span>
                   {result.outcome === 'error'
-                    ? 'Search sources failed. Check Settings → Sources or try again shortly.'
+                    ? failedProviders.length > 0
+                      ? `Every live source failed: ${failedProviders.map((p) => p.label).join(', ')}.`
+                      : 'Search sources failed. Check Settings → Sources or try again shortly.'
                     : result.outcome === 'unconfigured'
                       ? 'No live search sources are connected. Add pages to your index or enable a web source.'
-                      : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
+                      : failedProviders.length > 0
+                        ? `Some providers failed (${failedProviders.map((p) => p.label).join(', ')}). Try a rewrite below or deep mode.`
+                        : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
                 </span>
+                {result.rewrites.length > 0 && (
+                  <div className="empty__actions">
+                    {result.rewrites.map((rewrite) => (
+                      <button
+                        key={rewrite}
+                        type="button"
+                        className="chip"
+                        onClick={() => onInputChange(rewrite)}
+                      >
+                        Try “{rewrite}”
+                      </button>
+                    ))}
+                  </div>
+                )}
               </>
             )}
             <div className="empty__actions">
@@ -1363,8 +1457,21 @@ function SearchView({
       {result && query.trim() && (
         <details className="devdetails">
           <summary>Search details</summary>
+          <p>
+            Mode: {result.mode}
+            {deepMode ? ' (deep mode on)' : ''}
+          </p>
           <p>Sources checked: {result.attempted.join(', ')}</p>
           {result.queriesTried.length > 0 && <p>Tried {result.queriesTried.join(' → ')}</p>}
+          {result.rewrites.length > 0 && <p>Rewrites: {result.rewrites.join(' · ')}</p>}
+          {Object.keys(result.sourceTypeFacets).length > 0 && (
+            <p>
+              Source types:{' '}
+              {Object.entries(result.sourceTypeFacets)
+                .map(([type, count]) => `${type} ${count}`)
+                .join(', ')}
+            </p>
+          )}
           <ul>
             {result.diagnostics.map((item) => (
               <li key={item.id}>
