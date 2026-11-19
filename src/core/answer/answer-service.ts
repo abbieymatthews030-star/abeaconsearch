@@ -447,7 +447,9 @@ export class AnswerService {
         : this.disclaimerFor(citedSources, claims.length - supported.length);
 
     const searchGaps = this.buildSearchGaps(retrieved, warnings);
-    searchGaps.push(...conflicts);
+    for (const note of conflicts) {
+      searchGaps.push(`${note} Both sides are cited above — Beacon does not pick a winner.`);
+    }
     if (corroboration === 1 && confidence !== 'high') {
       searchGaps.push('No independent source currently corroborates this.');
     }

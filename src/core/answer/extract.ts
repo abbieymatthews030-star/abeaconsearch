@@ -99,6 +99,9 @@ export function scoreSentence(sentence: string, queryTerms: string[], weight: nu
   return (coverage * 2 + Math.min(hits, 6) * 0.08) * weight * lengthPenalty;
 }
 
+const NEGATION_RE =
+  /\b(not|never|no longer|isn't|doesn't|didn't|wasn't|weren't|false|denies|denied|disputed|incorrect|debunked)\b/i;
+
 function tooSimilar(a: string, b: string): boolean {
   const at = new Set(tokenize(a));
   const bt = new Set(tokenize(b));
@@ -106,6 +109,12 @@ function tooSimilar(a: string, b: string): boolean {
   let shared = 0;
   for (const t of at) if (bt.has(t)) shared += 1;
   return shared / Math.min(at.size, bt.size) > 0.8;
+}
+
+/** Keep both sides of a likely disagreement instead of collapsing them as duplicates. */
+function looksLikeDisagreement(a: string, b: string): boolean {
+  if (!tooSimilar(a, b)) return false;
+  return NEGATION_RE.test(a) !== NEGATION_RE.test(b);
 }
 
 /**
@@ -143,7 +152,8 @@ export function selectGroundedClaims(
   const chosen: GroundedClaim[] = [];
   for (const candidate of candidates) {
     if (chosen.length >= max) break;
-    if (chosen.some((c) => tooSimilar(c.text, candidate.text))) continue;
+    const duplicate = chosen.find((c) => tooSimilar(c.text, candidate.text));
+    if (duplicate && !looksLikeDisagreement(duplicate.text, candidate.text)) continue;
     chosen.push(candidate);
   }
   return chosen;
