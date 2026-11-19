@@ -8,6 +8,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Deep search mode:** `?mode=deep` / `?deep=1` on `/api/query` (and a Deep
+  toggle in the UI) fans out to long-tail keyless providers — Wayback Machine
+  CDX, Common Crawl index, Hacker News (Algolia), Reddit JSON, and Marginalia
+  (shared `public` API key, or `MARGINALIA_API_KEY`). Each provider has a
+  timeout, appears in Settings → Sources, and can be toggled off. Deep mode
+  uses `BEACON_DEEP_SEARCH_BUDGET_MS` (default 6s).
+- **Indie-aware rerank + source types:** Merged hits are rescored so small /
+  independent domains, official / academic / archive sources and older pages
+  rise above SEO megasites. Each result carries `sourceType` and
+  `rankReasons`; the UI filters by type via `?sourceType=`.
+- **Never-empty failures:** When every provider fails (or nothing matches),
+  the envelope includes `rewrites` and names failed providers so the UI can
+  offer concrete next steps instead of a blank page.
 - **Settings customisation:** General prefs for colour theme (system / light /
   dark), text size, content width, spacious density, reduce motion, and
   toggles for snippets, result meta, tags, and search suggestions. Choices
@@ -15,6 +28,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Answers flag disagreements:** When grounded claims from different sources
+  conflict, both sides stay cited and a search-gap note explains that Beacon
+  does not pick a winner.
+- **Private Docker Compose** sets `BEACON_KEYLESS_WEB_SEARCH=0` by default
+  (enable in `.env` when you want keyless live web search on the private
+  stack).
 - **Faster live search:** `/api/query` no longer waits for every web backend.
   A shared search budget (`BEACON_SEARCH_BUDGET_MS`, default 2.5s) aborts slow
   providers; everyday queries use a fast tier (Brave / Tavily / SearXNG /

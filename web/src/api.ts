@@ -214,6 +214,10 @@ export interface SearchParams {
   web?: 'force' | 'off';
   /** Tor mode: onion / Tor-directory results only, opened through Beacon. */
   tor?: boolean;
+  /** `deep` fans out to Wayback / Common Crawl / HN / Reddit / Marginalia. */
+  mode?: 'normal' | 'deep';
+  /** Filter results to one source type. */
+  sourceType?: 'forum' | 'archive' | 'official' | 'news' | 'blog' | 'academic';
 }
 
 function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
@@ -227,6 +231,8 @@ function appendCommonParams(qs: URLSearchParams, params: SearchParams): void {
   if (params.prefix === false) qs.set('prefix', 'false');
   if (params.web) qs.set('web', params.web);
   if (params.tor) qs.set('tor', 'true');
+  if (params.mode === 'deep') qs.set('mode', 'deep');
+  if (params.sourceType) qs.set('sourceType', params.sourceType);
   for (const tag of params.tags ?? []) qs.append('tags', tag);
 }
 

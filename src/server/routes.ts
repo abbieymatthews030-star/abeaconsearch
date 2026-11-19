@@ -127,6 +127,7 @@ async function runTorQuery(
       intent: 'general',
       outcome: 'unconfigured',
       synthesis: 'not_applicable',
+      mode: 'normal',
       local: emptyLocal,
       results: [],
       total: 0,
@@ -144,6 +145,8 @@ async function runTorQuery(
         },
       ],
       actions: [],
+      rewrites: [],
+      sourceTypeFacets: {},
       kind: 'general',
       primary: null,
     };
@@ -159,6 +162,7 @@ async function runTorQuery(
       intent: 'general',
       outcome: 'partial',
       synthesis: 'not_applicable',
+      mode: 'normal',
       local: emptyLocal,
       results: [],
       total: 0,
@@ -176,6 +180,8 @@ async function runTorQuery(
         },
       ],
       actions: [],
+      rewrites: [],
+      sourceTypeFacets: {},
       kind: 'general',
       primary: null,
     };
@@ -199,6 +205,7 @@ async function runTorQuery(
     intent: 'general',
     outcome: page.length > 0 ? 'results' : 'empty',
     synthesis: 'not_applicable',
+    mode: 'normal',
     local: emptyLocal,
     results: page,
     total: display.length,
@@ -216,6 +223,8 @@ async function runTorQuery(
       },
     ],
     actions: [],
+    rewrites: [],
+    sourceTypeFacets: {},
     kind: 'general',
     primary: null,
   };
@@ -358,9 +367,28 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
         return 'auto';
       });
 
+    const searchModeSchema = z
+      .union([z.string(), z.boolean()])
+      .optional()
+      .transform((v): 'normal' | 'deep' => {
+        if (v === undefined) return 'normal';
+        if (typeof v === 'boolean') return v ? 'deep' : 'normal';
+        const s = v.trim().toLowerCase();
+        if (s === 'deep' || s === 'true' || s === 'on' || s === '1') return 'deep';
+        return 'normal';
+      });
+
+    const sourceTypeSchema = z
+      .enum(['forum', 'archive', 'official', 'news', 'blog', 'academic'])
+      .optional();
+
     const universalQuerySchema = searchQuerySchema.extend({
       web: webModeSchema,
       tor: booleanParam(false),
+      mode: searchModeSchema,
+      /** Alias for `mode=deep` so `?deep=1` also works. */
+      deep: booleanParam(false),
+      sourceType: sourceTypeSchema,
     });
 
     // --- Universal query ------------------------------------------------------
@@ -375,6 +403,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
         return runTorQuery(ctx, query.q, query.limit, query.offset);
       }
       const classified = classifyQuery(query.q);
+      const mode = query.mode === 'deep' || query.deep ? 'deep' : 'normal';
 
       // Plate primary may upsert into the index — keep that after search so
       // this response never races a half-written plate-check document. Other
@@ -385,6 +414,8 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
         engine,
         config: config.answer,
         web: query.web,
+        mode,
+        sourceType: query.sourceType,
       });
       if (classified.kind === 'plate') {
         const envelope = await searchPromise;

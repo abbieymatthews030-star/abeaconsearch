@@ -8,8 +8,11 @@ export interface WebBackend {
   label: string;
   missingEnv: string[];
   provider: WebSearchProvider | null;
-  /** `fast` runs on every live query; `deep` only when scholarly or the fast tier is empty. */
-  tier?: 'fast' | 'deep';
+  /**
+   * `fast` runs on every live query; `deep` when scholarly or the fast tier is
+   * empty; `longtail` only in deep search mode.
+   */
+  tier?: 'fast' | 'deep' | 'longtail';
 }
 
 export interface AnnotatedWebResult extends WebResult {

@@ -1,11 +1,21 @@
 import { describeWebProviders } from '../answer/providers/web-search.js';
-import { DEFAULT_SEARCH_BUDGET_MS, type AnswerConfig } from '../config.js';
+import {
+  DEFAULT_DEEP_SEARCH_BUDGET_MS,
+  DEFAULT_SEARCH_BUDGET_MS,
+  type AnswerConfig,
+} from '../config.js';
 import { highlight, makeSnippet } from '../text.js';
 import { roundMs } from '../timing.js';
 import type { BeaconDocument, SearchQuery, SearchResponse } from '../types.js';
 import type { AnnotatedWebResult, WebBackend } from './fanout.js';
 import { fanOutWebSearch } from './fanout.js';
-import { buildSearchActions, detectIntent, stripQuotes, wantsDeepWebSources } from './intent.js';
+import {
+  buildQueryRewrites,
+  buildSearchActions,
+  detectIntent,
+  stripQuotes,
+  wantsDeepWebSources,
+} from './intent.js';
 import {
   assessLocalHit,
   canonicalUrl,
@@ -15,10 +25,13 @@ import {
   titleKey,
   isCloseSpelling,
 } from './relevance.js';
+import { rerankHits } from './rerank.js';
+import type { SourceType } from './source-type.js';
 import type {
   DisplayHit,
   SearchDiagnostic,
   SearchEnvelope,
+  SearchMode,
   SearchOutcome,
   SynthesisState,
 } from './types.js';
@@ -41,6 +54,10 @@ export interface RunSearchOptions {
    * local index already matched a general query.
    */
   web?: WebMode;
+  /** `deep` also queries long-tail archives / forums / indie indexes. */
+  mode?: SearchMode;
+  /** Optional filter: only keep hits with this source type. */
+  sourceType?: SourceType;
   /** Test override. When set, these backends are used instead of the configured providers. */
   backends?: WebBackend[];
   signal?: AbortSignal;
@@ -51,6 +68,7 @@ interface Ranked {
   plainTitle: string;
   domain?: string;
   summaryReady: boolean;
+  publishedAt?: string;
 }
 
 const WEB_INTENTS = new Set([
@@ -75,7 +93,7 @@ const SUMMARY_MIN_BODY_CHARS = 40;
 /** Enough fast-tier hits to skip the deep scholarly wave on everyday queries. */
 const FAST_TIER_ENOUGH = 3;
 
-function backendTier(backend: WebBackend): 'fast' | 'deep' {
+function backendTier(backend: WebBackend): 'fast' | 'deep' | 'longtail' {
   return backend.tier ?? 'fast';
 }
 
@@ -106,11 +124,16 @@ function webModeOf(options: RunSearchOptions): WebMode {
 }
 
 /** Tag filters are AND, matching the local engine. Source matches the chip label (`provider`). */
-function passesFilters(item: Ranked, search: SearchQuery): boolean {
+function passesFilters(
+  item: Ranked,
+  search: SearchQuery,
+  sourceType?: SourceType,
+): boolean {
   if (search.source && item.hit.provider !== search.source) return false;
   if (search.tags.length > 0 && !search.tags.every((tag) => item.hit.tags.includes(tag))) {
     return false;
   }
+  if (sourceType && item.hit.sourceType && item.hit.sourceType !== sourceType) return false;
   return true;
 }
 
@@ -270,7 +293,8 @@ function synthesisFor(query: string, results: Ranked[]): SynthesisState {
  * Fast-tier providers first (Brave / Tavily / SearXNG / DuckDuckGo / Wikipedia)
  * under a shared budget. Deep scholarly / archive sources join the first wave
  * only for research-shaped queries; otherwise they run as a short second wave
- * when the fast tier returned nothing useful.
+ * when the fast tier returned nothing useful. Long-tail providers (Wayback,
+ * Common Crawl, HN, Reddit, Marginalia) join only in deep search mode.
  */
 async function runTieredWebSearch(options: {
   backends: WebBackend[];
@@ -279,6 +303,7 @@ async function runTieredWebSearch(options: {
   limit: number;
   signal?: AbortSignal;
   budgetMs: number;
+  mode: SearchMode;
 }): Promise<{
   results: AnnotatedWebResult[];
   attempts: SearchDiagnostic[];
@@ -287,10 +312,37 @@ async function runTieredWebSearch(options: {
   const started = performance.now();
   const fast = options.backends.filter((backend) => backendTier(backend) === 'fast');
   const deep = options.backends.filter((backend) => backendTier(backend) === 'deep');
-  const includeDeepUpFront = deep.length > 0 && wantsDeepWebSources(options.query, options.intent);
+  const longtail = options.backends.filter((backend) => backendTier(backend) === 'longtail');
+  const deepMode = options.mode === 'deep';
+  const includeDeepUpFront =
+    deep.length > 0 && (deepMode || wantsDeepWebSources(options.query, options.intent));
 
-  const firstWave = includeDeepUpFront ? [...fast, ...deep] : fast;
+  const firstWave = [
+    ...(includeDeepUpFront ? [...fast, ...deep] : fast),
+    ...(deepMode ? longtail : []),
+  ];
   const deferredDeep = includeDeepUpFront ? [] : deep;
+  const deferredLongtail = deepMode
+    ? []
+    : longtail.map((backend) =>
+        backend.provider
+          ? {
+              id: backend.id,
+              label: backend.label,
+              status: 'skipped' as const,
+              detail: 'enable deep search mode to query long-tail sources',
+              missingEnv: [] as string[],
+              resultCount: 0,
+            }
+          : {
+              id: backend.id,
+              label: backend.label,
+              status: 'not_configured' as const,
+              detail: `not configured — set ${backend.missingEnv.join(' or ')}`,
+              missingEnv: backend.missingEnv,
+              resultCount: 0,
+            },
+      );
 
   const primary = await fanOutWebSearch({
     backends: firstWave,
@@ -330,7 +382,7 @@ async function runTieredWebSearch(options: {
       });
       return mergeFanResults(primary, {
         ...secondary,
-        attempts: [...idleDeepSkipped, ...secondary.attempts],
+        attempts: [...idleDeepSkipped, ...deferredLongtail, ...secondary.attempts],
       });
     }
   }
@@ -351,7 +403,7 @@ async function runTieredWebSearch(options: {
 
   return mergeFanResults(primary, {
     results: [],
-    attempts: [...idleDeepSkipped, ...deepSkipped],
+    attempts: [...idleDeepSkipped, ...deepSkipped, ...deferredLongtail],
     queriesTried: [],
   });
 }
@@ -365,6 +417,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   const started = performance.now();
   const query = options.query;
   const intent = detectIntent(query);
+  const mode: SearchMode = options.mode === 'deep' ? 'deep' : 'normal';
 
   if (!query.trim()) {
     const local = options.engine.search({ ...options.search, q: '' });
@@ -385,6 +438,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       intent,
       outcome: local.total > 0 ? 'results' : 'empty',
       synthesis: 'not_applicable',
+      mode,
       local,
       results,
       total: local.total,
@@ -402,6 +456,8 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
         },
       ],
       actions: [],
+      rewrites: [],
+      sourceTypeFacets: {},
     };
   }
   const { ranked: localRanked, raw: rawLocal } = indexHits(
@@ -416,9 +472,16 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
     webMode !== 'off' &&
     query.trim().length > 0 &&
     WEB_INTENTS.has(intent) &&
-    (webMode === 'force' || localRanked.length === 0 || intent !== 'general');
+    (webMode === 'force' ||
+      mode === 'deep' ||
+      localRanked.length === 0 ||
+      intent !== 'general');
 
   const specs = options.backends ?? describeWebProviders(options.config);
+  const budgetMs =
+    mode === 'deep'
+      ? (options.config.deepSearchBudgetMs ?? DEFAULT_DEEP_SEARCH_BUDGET_MS)
+      : (options.config.searchBudgetMs ?? DEFAULT_SEARCH_BUDGET_MS);
   const fan = shouldWeb
     ? await runTieredWebSearch({
         backends: specs,
@@ -426,7 +489,8 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
         intent,
         limit: Math.max(options.search.limit, WEB_MIN_LIMIT),
         signal: options.signal,
-        budgetMs: options.config.searchBudgetMs ?? DEFAULT_SEARCH_BUDGET_MS,
+        budgetMs,
+        mode,
       })
     : {
         results: [],
@@ -453,6 +517,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+    const publishedAt = publishedAtFromSnippet(snippet);
     return {
       hit: {
         id: `web:${canonicalUrl(result.url)}`,
@@ -468,6 +533,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       plainTitle: result.title,
       domain,
       summaryReady: false,
+      publishedAt,
     };
   });
 
@@ -475,16 +541,43 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   // such as a different person who only shares a surname.
   const phrase = tokens.join(' ');
   const full = webRanked.filter((item) => {
-    const hay = `${item.plainTitle} ${item.hit.snippet.replace(/<[^>]+>/g, ' ')}`.toLowerCase();
+    const hay = `${item.plainTitle} ${item.hit.snippet.replace(/<[^>]+>/g, ' ')}`
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
     return Boolean(phrase) && hay.includes(phrase);
   });
   const webKept = full.length > 0 ? full : webRanked;
 
   const search = options.search;
-  const merged = dedupe([...localRanked, ...webKept])
-    .filter((item) => passesFilters(item, search))
+  const deduped = dedupe([...localRanked, ...webKept]);
+  const reranked = rerankHits(
+    deduped.map((item) => ({
+      hit: item.hit,
+      plainTitle: item.plainTitle,
+      domain: item.domain,
+      publishedAt: item.publishedAt ?? item.hit.updatedAt,
+    })),
+    stripQuotes(query),
+  ).map((item) => ({
+    hit: item.hit,
+    plainTitle: item.plainTitle,
+    domain: item.domain,
+    summaryReady:
+      deduped.find((row) => row.hit.id === item.hit.id)?.summaryReady ?? item.hit.origin === 'web',
+    publishedAt: item.publishedAt,
+  }));
+
+  const merged = reranked
+    .filter((item) => passesFilters(item, search, options.sourceType))
     .sort((a, b) => compareRanked(search.sort, a, b));
   const page = merged.slice(options.search.offset, options.search.offset + options.search.limit);
+
+  const sourceTypeFacets: Partial<Record<SourceType, number>> = {};
+  for (const item of merged) {
+    const type = item.hit.sourceType;
+    if (!type) continue;
+    sourceTypeFacets[type] = (sourceTypeFacets[type] ?? 0) + 1;
+  }
 
   const localDiagnostic: SearchDiagnostic = {
     id: 'local_index',
@@ -501,12 +594,18 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
       .filter((item) => item.status === 'ok' || item.status === 'error')
       .map((item) => item.label),
   ];
+  const outcome = outcomeFor(merged.length, diagnostics);
+  const rewrites =
+    outcome === 'empty' || outcome === 'error' || merged.length === 0
+      ? buildQueryRewrites(query, intent)
+      : [];
 
   return {
     query: query.trim(),
     intent,
-    outcome: outcomeFor(merged.length, diagnostics),
+    outcome,
     synthesis: synthesisFor(query, merged),
+    mode,
     local,
     results: page.map((item) => item.hit),
     total: merged.length,
@@ -515,5 +614,15 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
     queriesTried: fan.queriesTried,
     diagnostics,
     actions: buildSearchActions(query, intent),
+    rewrites,
+    sourceTypeFacets,
   };
+}
+
+/** Pull a capture/publish year out of archive-style snippets when present. */
+function publishedAtFromSnippet(snippet: string): string | undefined {
+  const match =
+    /\b(?:Captured|Crawled)\s+(20\d{2}|\d{4})\b/i.exec(snippet) ||
+    /\b(19\d{2}|20\d{2})-\d{2}-\d{2}\b/.exec(snippet);
+  return match?.[1] ? `${match[1]}-01-01` : undefined;
 }

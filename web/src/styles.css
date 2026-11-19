@@ -937,6 +937,18 @@ button {
   font-weight: 600;
 }
 
+.result__rank-reasons {
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.search__box .search__deep {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 .result__score {
   margin-left: auto;
   font-variant-numeric: tabular-nums;

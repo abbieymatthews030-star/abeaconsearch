@@ -5,7 +5,7 @@ import { fanOutWebSearch, type WebBackend } from './fanout.js';
 function backend(
   id: string,
   search: WebSearchProvider['search'],
-  tier: 'fast' | 'deep' = 'fast',
+  tier: 'fast' | 'deep' | 'longtail' = 'fast',
 ): WebBackend {
   return {
     id,

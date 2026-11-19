@@ -46,6 +46,7 @@ describe('deep keyless providers', () => {
     expect(createDeepKeylessProviders({ timeoutMs: 1000 })).toHaveLength(10);
     expect(specs.find((s) => s.id === 'duckduckgo')?.tier).toBe('fast');
     expect(specs.find((s) => s.id === 'openalex')?.tier).toBe('deep');
+    expect(specs.find((s) => s.id === 'hacker_news')?.tier).toBe('longtail');
   });
 
   it('maps OpenAlex works to landing / DOI URLs', async () => {

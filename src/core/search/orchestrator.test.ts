@@ -25,7 +25,7 @@ function backend(
   name: string,
   search: WebSearchProvider['search'],
   id = name.toLowerCase(),
-  tier: 'fast' | 'deep' = 'fast',
+  tier: 'fast' | 'deep' | 'longtail' = 'fast',
 ): WebBackend {
   return {
     id,
@@ -477,5 +477,113 @@ describe('runUniversalSearch', () => {
   it('does not treat matthews as a fuzzy match for matches', () => {
     expect(isCloseSpelling('matthews', 'matches')).toBe(false);
     expect(isCloseSpelling('perfrmance', 'performance')).toBe(true);
+  });
+
+  it('queries long-tail backends only in deep mode and labels source types', async () => {
+    const engine = new SearchEngine();
+    let longtailCalls = 0;
+    const normal = await runUniversalSearch({
+      query: 'indie search engines',
+      search: searchQuery('indie search engines'),
+      engine,
+      config,
+      mode: 'normal',
+      backends: [
+        backend('DuckDuckGo', async () => [
+          {
+            title: 'Indie search engines overview',
+            url: 'https://en.wikipedia.org/wiki/Indie_search',
+            snippet: 'Indie search engines overview.',
+          },
+        ]),
+        backend(
+          'Marginalia',
+          async () => {
+            longtailCalls += 1;
+            return [
+              {
+                title: 'Small web notes',
+                url: 'https://tilde.club/~ada/search.html',
+                snippet: 'Indie search engines on the small web.',
+              },
+            ];
+          },
+          'marginalia',
+          'longtail',
+        ),
+      ],
+    });
+    expect(longtailCalls).toBe(0);
+    expect(normal.mode).toBe('normal');
+    expect(
+      normal.diagnostics.some(
+        (item) => item.id === 'marginalia' && /deep search mode/i.test(item.detail),
+      ),
+    ).toBe(true);
+
+    const deep = await runUniversalSearch({
+      query: 'indie search engines',
+      search: searchQuery('indie search engines'),
+      engine,
+      config,
+      mode: 'deep',
+      backends: [
+        backend('DuckDuckGo', async () => [
+          {
+            title: 'Indie search engines overview',
+            url: 'https://en.wikipedia.org/wiki/Indie_search',
+            snippet: 'Indie search engines overview.',
+          },
+        ]),
+        backend(
+          'Marginalia',
+          async () => {
+            longtailCalls += 1;
+            return [
+              {
+                title: 'Small web notes',
+                url: 'https://tilde.club/~ada/search.html',
+                snippet: 'Indie search engines on the small web.',
+              },
+            ];
+          },
+          'marginalia',
+          'longtail',
+        ),
+      ],
+    });
+    expect(longtailCalls).toBe(1);
+    expect(deep.mode).toBe('deep');
+    expect(deep.results.some((hit) => hit.provider === 'Marginalia')).toBe(true);
+    expect(deep.results.every((hit) => hit.sourceType && hit.rankReasons?.length)).toBe(true);
+    expect(Object.keys(deep.sourceTypeFacets).length).toBeGreaterThan(0);
+  });
+
+  it('returns rewrites and failed-provider diagnostics when every source errors', async () => {
+    const engine = new SearchEngine();
+    const result = await runUniversalSearch({
+      query: 'obscure widget protocol',
+      search: searchQuery('obscure widget protocol'),
+      engine,
+      config,
+      mode: 'deep',
+      backends: [
+        backend('DuckDuckGo', async () => {
+          throw new Error('upstream down');
+        }),
+        backend(
+          'Hacker News',
+          async () => {
+            throw new Error('rate limited');
+          },
+          'hacker_news',
+          'longtail',
+        ),
+      ],
+    });
+    expect(result.outcome).toBe('error');
+    expect(result.results).toHaveLength(0);
+    expect(result.rewrites.length).toBeGreaterThan(0);
+    expect(result.diagnostics.some((item) => item.status === 'error')).toBe(true);
   });
 });

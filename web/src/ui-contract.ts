@@ -21,6 +21,7 @@ export const ENVELOPE_FIELDS = [
   'intent',
   'outcome',
   'synthesis',
+  'mode',
   'local',
   'results',
   'total',
@@ -29,6 +30,8 @@ export const ENVELOPE_FIELDS = [
   'queriesTried',
   'diagnostics',
   'actions',
+  'rewrites',
+  'sourceTypeFacets',
 ] as const;
 
 export const QUERY_FIELDS = [...ENVELOPE_FIELDS, 'kind', 'primary'] as const;
@@ -44,6 +47,8 @@ export const DISPLAY_HIT_FIELDS = [
   'score',
   'tags',
   'updatedAt',
+  'sourceType',
+  'rankReasons',
 ] as const;
 
 export const ANSWER_FIELDS = [

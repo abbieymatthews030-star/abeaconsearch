@@ -5,7 +5,7 @@ No database, no external services — the index lives in memory and is persisted
 single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 
 - **Full-text search** with prefix + fuzzy matching, title/tag boosting, tag facets and highlighted snippets (powered by [MiniSearch](https://github.com/lucaong/minisearch)).
-- **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, plus scholarly / archive sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, Project Gutenberg) when the query needs them. A shared search budget keeps slow providers from blocking results.
+- **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, plus scholarly / archive sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, Project Gutenberg) when the query needs them. **Deep mode** also queries long-tail sources (Wayback Machine, Common Crawl, Hacker News, Reddit, Marginalia). Results are reranked so indie domains, primary sources and older pages are not drowned by SEO megasites, and each hit is labelled by source type. A shared search budget keeps slow providers from blocking results.
 - **Answer weave** — question-like queries get a short written answer from retrieved sources (index + live web), with citations, trust tiers, and a confidence banner. When sources are thin or missing, an LLM knowledge fallback still answers (marked unverified). Only bestiality and sexual/physical violence against women are denied.
 - **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
@@ -142,9 +142,9 @@ available as `beacon`.
 | `GET`    | `/api/health`         | Liveness + document count                            |
 | `GET`    | `/api/stats`          | Index statistics, top tags/sources                   |
 | `GET`    | `/api/search`         | `?q=&limit=&offset=&tags=&source=&fuzzy=&prefix=`    |
-| `GET`    | `/api/query`          | Universal box: classify + search + primary card      |
+| `GET`    | `/api/query`          | Universal box: classify + search + primary card. Supports `?web=`, `?tor=`, `?mode=deep` (or `?deep=1`), `?sourceType=forum\|archive\|official\|news\|blog\|academic` |
 | `GET`    | `/api/suggest`        | Autocomplete suggestions (`?q=&limit=`)              |
-| `GET`    | `/api/answer`         | Woven, cited answer for a query (`?q=&fresh=`)       |
+| `GET`    | `/api/answer`         | Woven, cited answer for a query (`?q=&fresh=`) — every claim cited; source disagreements flagged |
 | `GET`    | `/api/settings`       | List runtime settings                                |
 | `PATCH`  | `/api/settings`       | Update runtime settings                              |
 | `GET`    | `/api/diagnostics`    | Health + provider probe snapshot                     |

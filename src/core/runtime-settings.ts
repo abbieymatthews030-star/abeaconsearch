@@ -314,7 +314,7 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
     id: 'keylessWebSearch',
     label: 'Keyless web search',
     description:
-      'Allow DuckDuckGo, Wikipedia, and deep free sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, Project Gutenberg) when no Brave/Tavily/SearXNG key is configured.',
+      'Allow DuckDuckGo, Wikipedia, scholarly sources, and deep-mode long-tail providers (Wayback, Common Crawl, Hacker News, Reddit, Marginalia) when no Brave/Tavily/SearXNG key is configured.',
     type: 'toggle',
     section: 'sources',
     advanced: false,
@@ -322,6 +322,89 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
     get: (c) => c.answer.keylessWebSearch,
     set: (c, v) => {
       c.answer.keylessWebSearch = Boolean(v);
+    },
+  },
+  {
+    id: 'longtailWayback',
+    label: 'Wayback Machine (deep mode)',
+    description: 'Query Internet Archive CDX captures when deep search mode is on.',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.longtail.wayback,
+    set: (c, v) => {
+      c.answer.longtail.wayback = Boolean(v);
+    },
+  },
+  {
+    id: 'longtailCommonCrawl',
+    label: 'Common Crawl (deep mode)',
+    description: 'Query the Common Crawl URL index when deep search mode is on.',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.longtail.commonCrawl,
+    set: (c, v) => {
+      c.answer.longtail.commonCrawl = Boolean(v);
+    },
+  },
+  {
+    id: 'longtailHackerNews',
+    label: 'Hacker News (deep mode)',
+    description: 'Query HN via Algolia when deep search mode is on.',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.longtail.hackerNews,
+    set: (c, v) => {
+      c.answer.longtail.hackerNews = Boolean(v);
+    },
+  },
+  {
+    id: 'longtailReddit',
+    label: 'Reddit (deep mode)',
+    description:
+      'Query Reddit’s public JSON search when deep search mode is on. Some hosts block datacenter IPs.',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.longtail.reddit,
+    set: (c, v) => {
+      c.answer.longtail.reddit = Boolean(v);
+    },
+  },
+  {
+    id: 'longtailMarginalia',
+    label: 'Marginalia (deep mode)',
+    description:
+      'Query Marginalia’s independent / small-web index when deep search mode is on (shared public API key).',
+    type: 'toggle',
+    section: 'sources',
+    advanced: false,
+    requiresRestart: false,
+    get: (c) => c.answer.longtail.marginalia,
+    set: (c, v) => {
+      c.answer.longtail.marginalia = Boolean(v);
+    },
+  },
+  {
+    id: 'deepSearchBudgetMs',
+    label: 'Deep search budget',
+    description:
+      'Overall wait for deep-mode fan-out across scholarly and long-tail providers (ms).',
+    type: 'number',
+    min: 1_000,
+    max: 30_000,
+    section: 'advanced',
+    advanced: true,
+    requiresRestart: false,
+    get: (c) => c.answer.deepSearchBudgetMs,
+    set: (c, v) => {
+      c.answer.deepSearchBudgetMs = Number(v);
     },
   },
   {

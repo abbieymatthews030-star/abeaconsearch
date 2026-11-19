@@ -195,3 +195,28 @@ export function buildSearchActions(query: string, intent: SearchIntent): SearchA
   actions.push({ id: 'add', label: 'Add source URL' });
   return actions;
 }
+
+/**
+ * Concrete query rewrites for empty / failed searches — shorter, quoted, and
+ * alternate spellings the UI can offer without another round-trip.
+ */
+export function buildQueryRewrites(query: string, intent: SearchIntent): string[] {
+  const plain = stripQuotes(query);
+  const out: string[] = [];
+  const push = (value: string) => {
+    const next = value.trim();
+    if (!next || next.toLowerCase() === plain.toLowerCase()) return;
+    if (out.some((existing) => existing.toLowerCase() === next.toLowerCase())) return;
+    out.push(next);
+  };
+
+  const words = plain.split(/\s+/).filter(Boolean);
+  if (words.length > 2) push(words.slice(0, 2).join(' '));
+  if (words.length > 1) push(words[0] ?? plain);
+  if (words.length > 1) push(`"${plain}"`);
+  const broader = intent === 'person' || intent === 'company' ? reorderedName(plain) : null;
+  if (broader) push(broader);
+  const spelled = spellingVariant(plain);
+  if (spelled) push(spelled);
+  return out.slice(0, 5);
+}

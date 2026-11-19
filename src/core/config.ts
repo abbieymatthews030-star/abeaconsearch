@@ -95,10 +95,25 @@ export interface AnswerConfig {
   /**
    * Keyless web search (DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv,
    * Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of
-   * Congress, Project Gutenberg). On outside tests so a normal query can reach
-   * the web without an API key. Set BEACON_KEYLESS_WEB_SEARCH=0 to disable.
+   * Congress, Project Gutenberg, plus deep-mode long-tail sources). On outside
+   * tests so a normal query can reach the web without an API key. Set
+   * BEACON_KEYLESS_WEB_SEARCH=0 to disable.
    */
   keylessWebSearch: boolean;
+  /** Per-provider switches for deep-mode long-tail sources. */
+  longtail: LongtailConfig;
+  /** Overall wait for deep-mode fan-out (ms). Longer than the everyday budget. */
+  deepSearchBudgetMs: number;
+}
+
+export interface LongtailConfig {
+  wayback: boolean;
+  commonCrawl: boolean;
+  hackerNews: boolean;
+  reddit: boolean;
+  marginalia: boolean;
+  /** Optional Marginalia key; defaults to the shared `public` key. */
+  marginaliaApiKey?: string;
 }
 
 export interface PlateConfig {
@@ -126,6 +141,8 @@ export const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 export const DEFAULT_PLATE_TIMEOUT_MS = 12_000;
 /** Default overall wait for live web search across all providers. */
 export const DEFAULT_SEARCH_BUDGET_MS = 2_500;
+/** Default overall wait when deep mode fans out to long-tail sources. */
+export const DEFAULT_DEEP_SEARCH_BUDGET_MS = 6_000;
 
 function readInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -259,6 +276,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
         'BEACON_KEYLESS_WEB_SEARCH',
         (process.env.NODE_ENV ?? 'development') !== 'test',
       ),
+      longtail: {
+        wayback: readBool('BEACON_LONGTAIL_WAYBACK', true),
+        commonCrawl: readBool('BEACON_LONGTAIL_COMMON_CRAWL', true),
+        hackerNews: readBool('BEACON_LONGTAIL_HACKER_NEWS', true),
+        reddit: readBool('BEACON_LONGTAIL_REDDIT', true),
+        marginalia: readBool('BEACON_LONGTAIL_MARGINALIA', true),
+        marginaliaApiKey: readOptional('MARGINALIA_API_KEY'),
+      },
+      deepSearchBudgetMs: readInt('BEACON_DEEP_SEARCH_BUDGET_MS', DEFAULT_DEEP_SEARCH_BUDGET_MS),
     },
     lookups: {
       enabled: readBool('BEACON_LOOKUPS_ENABLED', true),
@@ -288,7 +314,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...overrides,
     site: { ...base.site, ...overrides.site },
     plate: { ...base.plate, ...overrides.plate },
-    answer: { ...base.answer, ...overrides.answer },
+    answer: {
+      ...base.answer,
+      ...overrides.answer,
+      longtail: { ...base.answer.longtail, ...overrides.answer?.longtail },
+    },
     lookups: { ...base.lookups, ...overrides.lookups },
     rateLimit: { ...base.rateLimit, ...overrides.rateLimit },
     tor: { ...base.tor, ...overrides.tor },
