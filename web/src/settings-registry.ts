@@ -50,6 +50,72 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     ],
   },
   {
+    id: 'colorTheme',
+    section: 'general',
+    label: 'Colour theme',
+    description:
+      'Light, dark, or follow the system. Saved in this browser until you change it again.',
+    type: 'select',
+    scope: 'client',
+    defaultValue: 'system',
+    options: [
+      { value: 'system', label: 'System' },
+      { value: 'light', label: 'Light' },
+      { value: 'dark', label: 'Dark' },
+    ],
+  },
+  {
+    id: 'textSize',
+    section: 'general',
+    label: 'Text size',
+    description: 'Scale the interface type without changing layout density.',
+    type: 'select',
+    scope: 'client',
+    defaultValue: 'medium',
+    options: [
+      { value: 'small', label: 'Small' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'large', label: 'Large' },
+    ],
+  },
+  {
+    id: 'contentWidth',
+    section: 'general',
+    label: 'Content width',
+    description: 'How wide the main column is on larger screens.',
+    type: 'select',
+    scope: 'client',
+    defaultValue: 'default',
+    options: [
+      { value: 'narrow', label: 'Narrow' },
+      { value: 'default', label: 'Default' },
+      { value: 'wide', label: 'Wide' },
+    ],
+  },
+  {
+    id: 'interfaceDensity',
+    section: 'general',
+    label: 'Interface density',
+    description: 'Spacing between results, cards, and settings rows.',
+    type: 'select',
+    scope: 'client',
+    defaultValue: 'comfortable',
+    options: [
+      { value: 'spacious', label: 'Spacious' },
+      { value: 'comfortable', label: 'Comfortable' },
+      { value: 'compact', label: 'Compact' },
+    ],
+  },
+  {
+    id: 'reduceMotion',
+    section: 'general',
+    label: 'Reduce motion',
+    description: 'Minimise transitions and decorative motion in the UI.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: false,
+  },
+  {
     id: 'resultsPerPage',
     section: 'general',
     label: 'Results per page',
@@ -72,16 +138,40 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     defaultValue: true,
   },
   {
-    id: 'interfaceDensity',
+    id: 'showSnippets',
     section: 'general',
-    label: 'Interface density',
-    type: 'select',
+    label: 'Show result snippets',
+    description: 'Display the highlighted excerpt under each result title.',
+    type: 'toggle',
     scope: 'client',
-    defaultValue: 'comfortable',
-    options: [
-      { value: 'comfortable', label: 'Comfortable' },
-      { value: 'compact', label: 'Compact' },
-    ],
+    defaultValue: true,
+  },
+  {
+    id: 'showResultMeta',
+    section: 'general',
+    label: 'Show result source & date',
+    description: 'Show the provider line and last-updated time under each result.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: true,
+  },
+  {
+    id: 'showResultTags',
+    section: 'general',
+    label: 'Show result tags',
+    description: 'Show tag chips on each result for quick filtering.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: true,
+  },
+  {
+    id: 'showSuggestions',
+    section: 'general',
+    label: 'Show search suggestions',
+    description: 'Offer autocomplete hints while typing in the search box.',
+    type: 'toggle',
+    scope: 'client',
+    defaultValue: true,
   },
   {
     id: 'searchMode',
@@ -194,6 +284,27 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     ],
   },
 ];
+
+/** Keep a stored client value if it still matches the registry; otherwise use the default. */
+export function sanitizeClientSettingValue(def: SettingDefinition, raw: unknown): unknown {
+  if (raw === undefined) return def.defaultValue;
+  if (def.type === 'toggle') return Boolean(raw);
+  if (def.type === 'number') {
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(n)) return def.defaultValue;
+    if (def.min !== undefined && n < def.min) return def.defaultValue;
+    if (def.max !== undefined && n > def.max) return def.defaultValue;
+    return n;
+  }
+  if (def.type === 'select' && def.options) {
+    const asString = String(raw);
+    const match = def.options.find((o) => o.value === asString);
+    if (!match) return def.defaultValue;
+    return typeof def.defaultValue === 'number' ? Number(match.value) : match.value;
+  }
+  if (def.type === 'text') return typeof raw === 'string' ? raw : String(raw ?? '');
+  return raw;
+}
 
 /**
  * Sections a server setting should also appear in. The API's own `section`

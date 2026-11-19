@@ -26,6 +26,7 @@ import {
   CLIENT_SETTINGS,
   clientSettingsInSection,
   inSection,
+  sanitizeClientSettingValue,
   searchSettings,
   serverEntryToDefinition,
   type SettingDefinition,
@@ -218,13 +219,21 @@ function defaultClientSettings(): ClientSettingValues {
   return values;
 }
 
+/** Merge stored prefs with defaults; drop unknown keys and invalid option values. */
 function loadClientSettings(): ClientSettingValues {
   const defaults = defaultClientSettings();
   try {
     const raw = localStorage.getItem(CLIENT_SETTINGS_KEY);
     if (!raw) return defaults;
     const parsed: unknown = JSON.parse(raw);
-    return { ...defaults, ...(typeof parsed === 'object' && parsed !== null ? parsed : {}) };
+    if (typeof parsed !== 'object' || parsed === null) return defaults;
+    const stored = parsed as Record<string, unknown>;
+    const values: ClientSettingValues = { ...defaults };
+    for (const def of CLIENT_SETTINGS) {
+      if (!(def.id in stored)) continue;
+      values[def.id] = sanitizeClientSettingValue(def, stored[def.id]);
+    }
+    return values;
   } catch {
     return defaults;
   }
@@ -232,9 +241,43 @@ function loadClientSettings(): ClientSettingValues {
 
 function saveClientSettings(values: ClientSettingValues): void {
   try {
-    localStorage.setItem(CLIENT_SETTINGS_KEY, JSON.stringify(values));
+    const cleaned: ClientSettingValues = {};
+    for (const def of CLIENT_SETTINGS) {
+      cleaned[def.id] = sanitizeClientSettingValue(def, values[def.id]);
+    }
+    localStorage.setItem(CLIENT_SETTINGS_KEY, JSON.stringify(cleaned));
   } catch {
     /* storage can be unavailable (private browsing, quota) */
+  }
+}
+
+const THEME_COLORS = { light: '#f7f6f2', dark: '#0c0c0d' } as const;
+
+function resolveColorTheme(preference: string): 'light' | 'dark' {
+  if (preference === 'light' || preference === 'dark') return preference;
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
+  }
+  return 'light';
+}
+
+/** Keep <html data-theme> and theme-color meta in sync with the saved preference. */
+function applyDocumentChrome(preference: string, textSize: string): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (preference === 'light' || preference === 'dark') {
+    root.setAttribute('data-theme', preference);
+  } else {
+    root.removeAttribute('data-theme');
+  }
+  root.setAttribute(
+    'data-text-size',
+    textSize === 'small' || textSize === 'large' ? textSize : 'medium',
+  );
+  const resolved = resolveColorTheme(preference);
+  root.style.colorScheme = resolved;
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    meta.setAttribute('content', THEME_COLORS[resolved]);
   }
 }
 
@@ -249,7 +292,11 @@ function useClientSettings(): ClientSettingsApi {
 
   const setValue = useCallback((id: string, value: unknown) => {
     setValues((prev) => {
-      const next = { ...prev, [id]: value };
+      const def = CLIENT_SETTINGS.find((d) => d.id === id);
+      const next = {
+        ...prev,
+        [id]: def ? sanitizeClientSettingValue(def, value) : value,
+      };
       saveClientSettings(next);
       return next;
     });
@@ -391,10 +438,15 @@ export function App(): JSX.Element {
   };
 
   const connectedSources = countConnectedSources(health);
+  const densityRaw = String(clientSettings.values.interfaceDensity ?? 'comfortable');
   const density =
-    typeof clientSettings.values.interfaceDensity === 'string'
-      ? clientSettings.values.interfaceDensity
-      : 'comfortable';
+    densityRaw === 'compact' || densityRaw === 'spacious' ? densityRaw : 'comfortable';
+  const colorTheme = String(clientSettings.values.colorTheme ?? 'system');
+  const textSizeRaw = String(clientSettings.values.textSize ?? 'medium');
+  const textSize = textSizeRaw === 'small' || textSizeRaw === 'large' ? textSizeRaw : 'medium';
+  const widthRaw = String(clientSettings.values.contentWidth ?? 'default');
+  const contentWidth = widthRaw === 'narrow' || widthRaw === 'wide' ? widthRaw : 'default';
+  const reduceMotion = clientSettings.values.reduceMotion === true;
   const torMode = clientSettings.values.torMode === true;
   const [torStatus, setTorStatus] = useState<TorStatusResponse | null>(null);
 
@@ -435,10 +487,21 @@ export function App(): JSX.Element {
     if (meta) meta.setAttribute('content', siteName);
   }, [siteName]);
 
+  useEffect(() => {
+    applyDocumentChrome(colorTheme, textSize);
+    if (colorTheme !== 'system' || typeof window === 'undefined') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => applyDocumentChrome('system', textSize);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [colorTheme, textSize]);
+
   return (
     <div
       className="app"
       data-density={density}
+      data-width={contentWidth}
+      data-motion={reduceMotion ? 'reduce' : 'ok'}
       data-tor={torMode ? 'on' : 'off'}
       data-stage={isHome ? 'home' : 'app'}
     >
@@ -600,6 +663,10 @@ function SearchView({
 }): JSX.Element {
   const resultsPerPage = Number(clientSettings.values.resultsPerPage) || DEFAULT_PAGE_SIZE;
   const openInNewTab = clientSettings.values.openInNewTab !== false;
+  const showSnippets = clientSettings.values.showSnippets !== false;
+  const showResultMeta = clientSettings.values.showResultMeta !== false;
+  const showResultTags = clientSettings.values.showResultTags !== false;
+  const showSuggestions = clientSettings.values.showSuggestions !== false;
   const searchMode = String(clientSettings.values.searchMode ?? 'balanced');
   const fuzzy = clientSettings.values.fuzzy !== false;
   const allowPartialMatch = clientSettings.values.allowPartialMatch !== false;
@@ -798,8 +865,12 @@ function SearchView({
   useEffect(() => {
     if (pageScrollRef.current === page) return;
     pageScrollRef.current = page;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [page]);
+    const preferReduce =
+      clientSettings.values.reduceMotion === true ||
+      (typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    window.scrollTo({ top: 0, behavior: preferReduce ? 'auto' : 'smooth' });
+  }, [page, clientSettings.values.reduceMotion]);
 
   useEffect(() => {
     const q = historyQuery.trim();
@@ -810,7 +881,7 @@ function SearchView({
 
   useEffect(() => {
     const q = suggestQuery.trim();
-    if (q.length < 2) {
+    if (!showSuggestions || q.length < 2) {
       setSuggestions([]);
       return;
     }
@@ -824,7 +895,7 @@ function SearchView({
         /* suggestions are a convenience; ignore failures */
       });
     return () => controller.abort();
-  }, [suggestQuery]);
+  }, [suggestQuery, showSuggestions]);
 
   useEffect(() => {
     setActiveSuggestion(-1);
@@ -1190,29 +1261,36 @@ function SearchView({
               )}
             </h3>
             {(hit.domain || hit.url) && <div className="result__url">{hit.domain || hit.url}</div>}
-            {hit.snippet && (
+            {showSnippets && hit.snippet && (
               <p className="result__snippet" dangerouslySetInnerHTML={{ __html: hit.snippet }} />
             )}
-            <div className="result__foot">
-              <span className="result__source">
-                {torMode || hit.tags.includes('onion')
-                  ? `Tor · ${hit.provider}`
-                  : hit.origin === 'web'
-                    ? `Web · ${hit.provider}`
-                    : `Your index · ${hit.provider}`}
-              </span>
-              {hit.updatedAt && <span>{relativeTime(hit.updatedAt, region)}</span>}
-              {hit.tags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  className="chip chip--sm"
-                  onClick={() => toggleTag(tag)}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
+            {(showResultMeta || (showResultTags && hit.tags.length > 0)) && (
+              <div className="result__foot">
+                {showResultMeta && (
+                  <span className="result__source">
+                    {torMode || hit.tags.includes('onion')
+                      ? `Tor · ${hit.provider}`
+                      : hit.origin === 'web'
+                        ? `Web · ${hit.provider}`
+                        : `Your index · ${hit.provider}`}
+                  </span>
+                )}
+                {showResultMeta && hit.updatedAt && (
+                  <span>{relativeTime(hit.updatedAt, region)}</span>
+                )}
+                {showResultTags &&
+                  hit.tags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="chip chip--sm"
+                      onClick={() => toggleTag(tag)}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+              </div>
+            )}
           </li>
         ))}
       </ol>
@@ -3699,17 +3777,23 @@ function SettingsView({
 
         <div className="settings__panel">
           {section === 'general' && (
-            <SettingsSection
-              title="General"
-              section="general"
-              clientSettings={clientSettings}
-              serverSettings={serverSettings}
-              llmNames={llmNames}
-              pendingServer={pendingServer}
-              serverErrors={serverErrors}
-              onServerChange={handleServerChange}
-              onReset={() => resetSection('general')}
-            />
+            <>
+              <p className="settings__persist-note">
+                Appearance and display choices below are saved in this browser and keep applying
+                until you change them or restore defaults.
+              </p>
+              <SettingsSection
+                title="General"
+                section="general"
+                clientSettings={clientSettings}
+                serverSettings={serverSettings}
+                llmNames={llmNames}
+                pendingServer={pendingServer}
+                serverErrors={serverErrors}
+                onServerChange={handleServerChange}
+                onReset={() => resetSection('general')}
+              />
+            </>
           )}
           {section === 'search' && (
             <SettingsSection

@@ -37,6 +37,29 @@
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/site.webmanifest" />
+    <script>
+      /* Apply saved theme / text size before paint to avoid a flash. */
+      (function () {
+        try {
+          var raw = localStorage.getItem('beacon:settings');
+          if (!raw) return;
+          var s = JSON.parse(raw);
+          if (!s || typeof s !== 'object') return;
+          var theme = s.colorTheme;
+          var root = document.documentElement;
+          if (theme === 'light' || theme === 'dark') {
+            root.setAttribute('data-theme', theme);
+            root.style.colorScheme = theme;
+          }
+          var size = s.textSize;
+          if (size === 'small' || size === 'medium' || size === 'large') {
+            root.setAttribute('data-text-size', size);
+          }
+        } catch (e) {
+          /* ignore corrupt prefs */
+        }
+      })();
+    </script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
