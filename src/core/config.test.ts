@@ -36,6 +36,7 @@ describe('loadConfig', () => {
     expect(config.tor.socksUrl).toBe('socks5h://127.0.0.1:9050');
     expect(config.site.name).toBe('Beacon Search');
     expect(config.site.url).toBe('');
+    expect(config.answer.searchBudgetMs).toBe(2_500);
   });
 
   it('reads public site identity from the environment', () => {

@@ -8,6 +8,8 @@ export interface WebProviderSpec {
   label: string;
   missingEnv: string[];
   provider: WebSearchProvider | null;
+  /** `fast` for everyday search; `deep` for scholarly / archive sources. */
+  tier: 'fast' | 'deep';
 }
 
 export interface WebResult {
@@ -203,18 +205,33 @@ export class DuckDuckGoProvider implements WebSearchProvider {
   }
 
   async search(query: string, limit: number, signal?: AbortSignal): Promise<WebResult[]> {
+    // Race HTML + JSON so a slow HTML scrape does not double the wait when
+    // the instant-answer API already has usable links.
     let htmlError: unknown;
-    try {
-      const htmlHits = await this.searchHtml(query, limit, signal);
-      if (htmlHits.length > 0) return htmlHits;
-    } catch (error) {
+    let jsonError: unknown;
+    const htmlPromise = this.searchHtml(query, limit, signal).catch((error) => {
       htmlError = error;
-    }
-    try {
-      return await this.searchJson(query, limit, signal);
-    } catch (error) {
-      throw htmlError ?? error;
-    }
+      return [] as WebResult[];
+    });
+    const jsonPromise = this.searchJson(query, limit, signal).catch((error) => {
+      jsonError = error;
+      return [] as WebResult[];
+    });
+
+    const first = await Promise.race([
+      htmlPromise.then((hits) => ({ source: 'html' as const, hits })),
+      jsonPromise.then((hits) => ({ source: 'json' as const, hits })),
+    ]);
+    if (first.hits.length > 0) return first.hits;
+
+    const htmlHits = await htmlPromise;
+    if (htmlHits.length > 0) return htmlHits;
+    const jsonHits = await jsonPromise;
+    if (jsonHits.length > 0) return jsonHits;
+    if (htmlError && jsonError) throw htmlError;
+    if (htmlError) throw htmlError;
+    if (jsonError) throw jsonError;
+    return [];
   }
 
   private async searchHtml(
@@ -365,36 +382,42 @@ export function describeWebProviders(
       label: 'Brave Search',
       missingEnv: ['BRAVE_SEARCH_API_KEY'],
       provider: brave.configured ? brave : null,
+      tier: 'fast',
     },
     {
       id: 'tavily',
       label: 'Tavily',
       missingEnv: ['TAVILY_API_KEY'],
       provider: tavily.configured ? tavily : null,
+      tier: 'fast',
     },
     {
       id: 'searxng',
       label: 'SearXNG',
       missingEnv: ['SEARXNG_URL'],
       provider: searxng.configured ? searxng : null,
+      tier: 'fast',
     },
     {
       id: 'duckduckgo',
       label: 'DuckDuckGo',
       missingEnv: keylessMissing,
       provider: keyless ? duckduckgo : null,
+      tier: 'fast',
     },
     {
       id: 'wikipedia',
       label: 'Wikipedia',
       missingEnv: keylessMissing,
       provider: keyless ? wikipedia : null,
+      tier: 'fast',
     },
     ...deep.map((provider) => ({
       id: provider.name.toLowerCase().replace(/\s+/g, '_'),
       label: provider.name,
       missingEnv: keylessMissing,
       provider: keyless ? provider : null,
+      tier: 'deep' as const,
     })),
   ];
 }

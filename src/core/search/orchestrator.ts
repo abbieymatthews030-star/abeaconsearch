@@ -1,11 +1,11 @@
 import { describeWebProviders } from '../answer/providers/web-search.js';
-import type { AnswerConfig } from '../config.js';
+import { DEFAULT_SEARCH_BUDGET_MS, type AnswerConfig } from '../config.js';
 import { highlight, makeSnippet } from '../text.js';
 import { roundMs } from '../timing.js';
 import type { BeaconDocument, SearchQuery, SearchResponse } from '../types.js';
-import type { WebBackend } from './fanout.js';
+import type { AnnotatedWebResult, WebBackend } from './fanout.js';
 import { fanOutWebSearch } from './fanout.js';
-import { buildSearchActions, detectIntent, stripQuotes } from './intent.js';
+import { buildSearchActions, detectIntent, stripQuotes, wantsDeepWebSources } from './intent.js';
 import {
   assessLocalHit,
   canonicalUrl,
@@ -72,6 +72,34 @@ const WEB_MIN_LIMIT = 8;
 const SNIPPET_MAX_CHARS = 320;
 const BODY_SCORE_SLICE = 400;
 const SUMMARY_MIN_BODY_CHARS = 40;
+/** Enough fast-tier hits to skip the deep scholarly wave on everyday queries. */
+const FAST_TIER_ENOUGH = 3;
+
+function backendTier(backend: WebBackend): 'fast' | 'deep' {
+  return backend.tier ?? 'fast';
+}
+
+function mergeFanResults(
+  ...fans: Array<{
+    results: AnnotatedWebResult[];
+    attempts: SearchDiagnostic[];
+    queriesTried: string[];
+  }>
+): { results: AnnotatedWebResult[]; attempts: SearchDiagnostic[]; queriesTried: string[] } {
+  const results: AnnotatedWebResult[] = [];
+  const attempts: SearchDiagnostic[] = [];
+  const queriesTried: string[] = [];
+  for (const fan of fans) {
+    results.push(...fan.results);
+    attempts.push(...fan.attempts);
+    for (const tried of fan.queriesTried) {
+      if (!queriesTried.some((existing) => existing.toLowerCase() === tried.toLowerCase())) {
+        queriesTried.push(tried);
+      }
+    }
+  }
+  return { results, attempts, queriesTried };
+}
 
 function webModeOf(options: RunSearchOptions): WebMode {
   return options.web ?? 'auto';
@@ -239,6 +267,96 @@ function synthesisFor(query: string, results: Ranked[]): SynthesisState {
 }
 
 /**
+ * Fast-tier providers first (Brave / Tavily / SearXNG / DuckDuckGo / Wikipedia)
+ * under a shared budget. Deep scholarly / archive sources join the first wave
+ * only for research-shaped queries; otherwise they run as a short second wave
+ * when the fast tier returned nothing useful.
+ */
+async function runTieredWebSearch(options: {
+  backends: WebBackend[];
+  query: string;
+  intent: ReturnType<typeof detectIntent>;
+  limit: number;
+  signal?: AbortSignal;
+  budgetMs: number;
+}): Promise<{
+  results: AnnotatedWebResult[];
+  attempts: SearchDiagnostic[];
+  queriesTried: string[];
+}> {
+  const started = performance.now();
+  const fast = options.backends.filter((backend) => backendTier(backend) === 'fast');
+  const deep = options.backends.filter((backend) => backendTier(backend) === 'deep');
+  const includeDeepUpFront = deep.length > 0 && wantsDeepWebSources(options.query, options.intent);
+
+  const firstWave = includeDeepUpFront ? [...fast, ...deep] : fast;
+  const deferredDeep = includeDeepUpFront ? [] : deep;
+
+  const primary = await fanOutWebSearch({
+    backends: firstWave,
+    query: options.query,
+    intent: options.intent,
+    limit: options.limit,
+    signal: options.signal,
+    filter: 'strict',
+    budgetMs: options.budgetMs,
+  });
+
+  const idleDeepSkipped = deferredDeep
+    .filter((backend) => !backend.provider)
+    .map((backend) => ({
+      id: backend.id,
+      label: backend.label,
+      status: 'not_configured' as const,
+      detail: `not configured — set ${backend.missingEnv.join(' or ')}`,
+      missingEnv: backend.missingEnv,
+      resultCount: 0,
+    }));
+
+  if (
+    deferredDeep.some((backend) => backend.provider) &&
+    primary.results.length < FAST_TIER_ENOUGH
+  ) {
+    const remaining = Math.max(0, options.budgetMs - Math.round(performance.now() - started));
+    if (remaining > 0 && !options.signal?.aborted) {
+      const secondary = await fanOutWebSearch({
+        backends: deferredDeep,
+        query: options.query,
+        intent: options.intent,
+        limit: options.limit,
+        signal: options.signal,
+        filter: 'strict',
+        budgetMs: remaining,
+      });
+      return mergeFanResults(primary, {
+        ...secondary,
+        attempts: [...idleDeepSkipped, ...secondary.attempts],
+      });
+    }
+  }
+
+  const deepSkipped = deferredDeep
+    .filter((backend) => backend.provider)
+    .map((backend) => ({
+      id: backend.id,
+      label: backend.label,
+      status: 'skipped' as const,
+      detail:
+        primary.results.length >= FAST_TIER_ENOUGH
+          ? 'fast-tier results were enough'
+          : 'search budget exhausted before deep sources',
+      missingEnv: [],
+      resultCount: 0,
+    }));
+
+  return mergeFanResults(primary, {
+    results: [],
+    attempts: [...idleDeepSkipped, ...deepSkipped],
+    queriesTried: [],
+  });
+}
+
+/**
  * Local index first, then every configured web provider when the index has
  * nothing relevant — and always for queries a document index cannot answer
  * on its own (people, companies, addresses, and open questions).
@@ -302,13 +420,13 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
 
   const specs = options.backends ?? describeWebProviders(options.config);
   const fan = shouldWeb
-    ? await fanOutWebSearch({
+    ? await runTieredWebSearch({
         backends: specs,
         query,
         intent,
         limit: Math.max(options.search.limit, WEB_MIN_LIMIT),
         signal: options.signal,
-        filter: 'strict',
+        budgetMs: options.config.searchBudgetMs ?? DEFAULT_SEARCH_BUDGET_MS,
       })
     : {
         results: [],

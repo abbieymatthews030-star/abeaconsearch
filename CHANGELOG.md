@@ -15,6 +15,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Faster live search:** `/api/query` no longer waits for every web backend.
+  A shared search budget (`BEACON_SEARCH_BUDGET_MS`, default 2.5s) aborts slow
+  providers; everyday queries use a fast tier (Brave / Tavily / SearXNG /
+  DuckDuckGo / Wikipedia) first and only call scholarly / archive sources when
+  the query looks research-shaped or the fast tier is empty. DuckDuckGo races
+  HTML + JSON; pinned answer sources fetch in parallel; domain/IP/calc primary
+  cards overlap the web fan-out.
 - **Home UI polish:** empty Search tab is a single brand-first composition
   (beacon mark, product name, one line, search CTA). Compact chrome returns
   once you query. IBM Plex Mono + warmer paper/grid atmosphere.

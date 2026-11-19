@@ -77,6 +77,11 @@ export interface AnswerConfig {
   maxSources: number;
   /** Per-request timeout for fetching a source page / web search (ms). */
   fetchTimeoutMs: number;
+  /**
+   * Overall wait for a live web fan-out (ms). Slow backends are skipped when
+   * this budget expires so one hung provider cannot block `/api/query`.
+   */
+  searchBudgetMs: number;
   /** Timeout for the LLM synthesis call (ms). */
   llmTimeoutMs: number;
   /** Extra domains promoted to the `official` trust tier. */
@@ -119,6 +124,8 @@ export const DEFAULT_USER_AGENT =
 export const DEFAULT_LOOKUP_TIMEOUT_MS = 8_000;
 export const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 export const DEFAULT_PLATE_TIMEOUT_MS = 12_000;
+/** Default overall wait for live web search across all providers. */
+export const DEFAULT_SEARCH_BUDGET_MS = 2_500;
 
 function readInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -239,6 +246,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       searxngUrl: readOptional('SEARXNG_URL'),
       maxSources: readInt('BEACON_ANSWER_MAX_SOURCES', 8),
       fetchTimeoutMs: readInt('BEACON_ANSWER_FETCH_TIMEOUT_MS', DEFAULT_LOOKUP_TIMEOUT_MS),
+      searchBudgetMs: readInt('BEACON_SEARCH_BUDGET_MS', DEFAULT_SEARCH_BUDGET_MS),
       llmTimeoutMs: readInt('BEACON_ANSWER_LLM_TIMEOUT_MS', 30_000),
       trustedDomains: readList('ANSWER_TRUSTED_DOMAINS'),
       allowPrivateHosts: readBool('BEACON_ANSWER_ALLOW_PRIVATE', false),

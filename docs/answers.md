@@ -17,13 +17,15 @@ response is explicit about trust, citations, and the narrow deny list.
 
 1. **Retrieve** (`src/core/answer/retrieval.ts`)
    - Local index: an OR-combined search, top _n_ documents.
-   - Live web: every configured backend is queried in parallel — keyed ones
-     (`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `SEARXNG_URL`) plus keyless
-     DuckDuckGo, Wikipedia, and deep free sources (OpenAlex, Crossref, arXiv,
-     Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of
-     Congress, Project Gutenberg) when `BEACON_KEYLESS_WEB_SEARCH` is on. Top
-     URLs are fetched through the SSRF guard (`hostIsPrivate`) and `robots.txt`,
-     then reduced to readable text. Unreachable / blocked URLs become `warnings`.
+   - Live web: configured backends are queried in parallel under
+     `BEACON_SEARCH_BUDGET_MS` — keyed ones (`BRAVE_SEARCH_API_KEY` /
+     `TAVILY_API_KEY` / `SEARXNG_URL`) plus keyless DuckDuckGo / Wikipedia, with
+     deep free sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata,
+     Internet Archive, Open Library, DOAJ, Library of Congress, Project
+     Gutenberg) when `BEACON_KEYLESS_WEB_SEARCH` is on and the query needs them.
+     Top URLs are fetched through the SSRF guard (`hostIsPrivate`) and
+     `robots.txt`, then reduced to readable text. Unreachable / blocked URLs
+     become `warnings`.
    - Sources are de-duplicated by URL and capped at `BEACON_ANSWER_MAX_SOURCES`.
 2. **Ground** (`src/core/answer/extract.ts`) — each source is split into
    sentences; the sentences that best cover the query terms (weighted by source

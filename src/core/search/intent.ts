@@ -70,6 +70,25 @@ export function stripQuotes(query: string): string {
     .trim();
 }
 
+/** Scholarly / archive sources (OpenAlex, arXiv, …) are useful for these queries. */
+const SCHOLARLY_RE =
+  /\b(arxiv|doi|paper|papers|journal|journals|research|study|studies|pubmed|scholar|citation|citations|thesis|preprint|preprints|meta-?analysis|systematic review|openalex|crossref|pmc|bibliograph)\b/i;
+
+/**
+ * Whether the deep keyless tier (OpenAlex, Crossref, arXiv, …) should run on
+ * the first wave. Everyday person / company / site lookups stay on the fast
+ * tier so slow scholarly APIs do not gate the result list.
+ */
+export function wantsDeepWebSources(query: string, intent: SearchIntent): boolean {
+  if (intent === 'person' || intent === 'company' || intent === 'domain' || intent === 'ip') {
+    return SCHOLARLY_RE.test(query);
+  }
+  if (intent === 'email' || intent === 'username' || intent === 'phone' || intent === 'location') {
+    return false;
+  }
+  return SCHOLARLY_RE.test(query) || intent === 'factual';
+}
+
 function looksLikePerson(query: string): boolean {
   const words = stripQuotes(query).split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 4) return false;

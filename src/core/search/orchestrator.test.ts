@@ -25,11 +25,13 @@ function backend(
   name: string,
   search: WebSearchProvider['search'],
   id = name.toLowerCase(),
+  tier: 'fast' | 'deep' = 'fast',
 ): WebBackend {
   return {
     id,
     label: name,
     missingEnv: [],
+    tier,
     provider: { name, configured: true, search },
   };
 }
@@ -417,6 +419,59 @@ describe('runUniversalSearch', () => {
     });
     expect(calls).toBeGreaterThan(0);
     expect(forced.results.some((hit) => hit.origin === 'web')).toBe(true);
+  });
+
+  it('skips deep scholarly backends when the fast tier already has enough hits', async () => {
+    const engine = new SearchEngine();
+    let deepCalls = 0;
+    const result = await runUniversalSearch({
+      query: 'abbiey matthews',
+      search: searchQuery('abbiey matthews'),
+      engine,
+      config: { ...config, searchBudgetMs: 2_000 },
+      backends: [
+        backend('DuckDuckGo', async () => [
+          {
+            title: 'Abbiey Matthews one',
+            url: 'https://example.com/a1',
+            snippet: 'Abbiey Matthews profile one.',
+          },
+          {
+            title: 'Abbiey Matthews two',
+            url: 'https://example.com/a2',
+            snippet: 'Abbiey Matthews profile two.',
+          },
+          {
+            title: 'Abbiey Matthews three',
+            url: 'https://example.com/a3',
+            snippet: 'Abbiey Matthews profile three.',
+          },
+        ]),
+        backend(
+          'OpenAlex',
+          async () => {
+            deepCalls += 1;
+            return [
+              {
+                title: 'Should not run',
+                url: 'https://openalex.org/should-not',
+                snippet: 'Abbiey Matthews paper.',
+              },
+            ];
+          },
+          'openalex',
+          'deep',
+        ),
+      ],
+    });
+
+    expect(deepCalls).toBe(0);
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(
+      result.diagnostics.some(
+        (item) => item.id === 'openalex' && item.detail === 'fast-tier results were enough',
+      ),
+    ).toBe(true);
   });
 
   it('does not treat matthews as a fuzzy match for matches', () => {
