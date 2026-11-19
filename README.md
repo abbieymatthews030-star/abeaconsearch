@@ -5,7 +5,7 @@ No database, no external services — the index lives in memory and is persisted
 single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 
 - **Full-text search** with prefix + fuzzy matching, title/tag boosting, tag facets and highlighted snippets (powered by [MiniSearch](https://github.com/lucaong/minisearch)).
-- **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, and Project Gutenberg.
+- **Live multi-source search** — every query fans out across keyed backends (Brave / Tavily / SearXNG) and free keyless ones: DuckDuckGo, Wikipedia, plus scholarly / archive sources (OpenAlex, Crossref, arXiv, Europe PMC, Wikidata, Internet Archive, Open Library, DOAJ, Library of Congress, Project Gutenberg) when the query needs them. A shared search budget keeps slow providers from blocking results.
 - **Answer weave** — question-like queries get a short written answer from retrieved sources (index + live web), with citations, trust tiers, and a confidence banner. When sources are thin or missing, an LLM knowledge fallback still answers (marked unverified). Only bestiality and sexual/physical violence against women are denied.
 - **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.

@@ -237,6 +237,22 @@ export const RUNTIME_SETTINGS: RuntimeSettingDefinition[] = [
     },
   },
   {
+    id: 'searchBudgetMs',
+    label: 'Live search budget',
+    description:
+      'Overall wait for live web search across providers. Slow sources are skipped when this expires.',
+    type: 'number',
+    min: 500,
+    max: 30_000,
+    section: 'advanced',
+    advanced: true,
+    requiresRestart: false,
+    get: (c) => c.answer.searchBudgetMs,
+    set: (c, v) => {
+      c.answer.searchBudgetMs = Number(v);
+    },
+  },
+  {
     id: 'answerLlmTimeoutMs',
     label: 'Model timeout',
     description: 'Timeout for the LLM synthesis call.',

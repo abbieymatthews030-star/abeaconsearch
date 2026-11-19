@@ -376,16 +376,25 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       }
       const classified = classifyQuery(query.q);
 
-      // Search first, then plate primary (which may upsert into the index) so
-      // this response never races a half-written plate-check document.
-      const envelope = await runUniversalSearch({
+      // Plate primary may upsert into the index — keep that after search so
+      // this response never races a half-written plate-check document. Other
+      // primaries (domain / IP / calc) overlap with the web fan-out.
+      const searchPromise = runUniversalSearch({
         query: query.q,
         search: query,
         engine,
         config: config.answer,
         web: query.web,
       });
-      const primary = await resolvePrimary(classified, config, plateChecker, engine);
+      if (classified.kind === 'plate') {
+        const envelope = await searchPromise;
+        const primary = await resolvePrimary(classified, config, plateChecker, engine);
+        return { ...envelope, kind: classified.kind, primary };
+      }
+      const [envelope, primary] = await Promise.all([
+        searchPromise,
+        resolvePrimary(classified, config, plateChecker, engine),
+      ]);
 
       return { ...envelope, kind: classified.kind, primary };
     });

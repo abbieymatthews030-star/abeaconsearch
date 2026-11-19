@@ -130,20 +130,33 @@ async function gatherPinned(
   const sources: RetrievedSource[] = [];
   const seen = new Set<string>();
   const robotsCache = new Map<string, RobotsRules>();
+  const unique: string[] = [];
   for (const raw of urls) {
     const key = canonicalUrl(raw);
     if (seen.has(key)) continue;
     seen.add(key);
-    const doc = docByUrl(deps.engine, raw);
-    if (doc) {
-      const source = sourceFromDocument(query, doc, deps);
-      if (source) sources.push(source);
-      else warnings.push(`indexed page had no readable text: ${raw}`);
-      continue;
-    }
-    const fetched = await fetchWebPage(query, { title: raw, url: raw }, deps, robotsCache);
-    if ('error' in fetched) warnings.push(`${raw}: ${fetched.error}`);
-    else sources.push(fetched);
+    unique.push(raw);
+  }
+
+  // Fetch pinned pages in parallel (same as the non-pinned path) so N sources
+  // do not pay N × (robots + HTML) sequentially.
+  const settled = await Promise.all(
+    unique.map(async (raw) => {
+      const doc = docByUrl(deps.engine, raw);
+      if (doc) {
+        const source = sourceFromDocument(query, doc, deps);
+        if (source) return { ok: true as const, source };
+        return { ok: false as const, warning: `indexed page had no readable text: ${raw}` };
+      }
+      const fetched = await fetchWebPage(query, { title: raw, url: raw }, deps, robotsCache);
+      if ('error' in fetched) return { ok: false as const, warning: `${raw}: ${fetched.error}` };
+      return { ok: true as const, source: fetched };
+    }),
+  );
+
+  for (const item of settled) {
+    if (item.ok) sources.push(item.source);
+    else warnings.push(item.warning);
   }
   return {
     sources: sources
@@ -264,6 +277,7 @@ export async function gatherSources(query: string, deps: GatherDeps): Promise<Ga
         limit: requested,
         signal: deps.signal,
         filter: 'off',
+        budgetMs: config.searchBudgetMs,
       });
       for (const attempt of fan.attempts) {
         if (attempt.status === 'error') warnings.push(`${attempt.label} failed: ${attempt.detail}`);
