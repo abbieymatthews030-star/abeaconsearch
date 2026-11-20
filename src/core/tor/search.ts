@@ -1,5 +1,4 @@
 import * as cheerio from 'cheerio';
-import { fetchWithTimeout } from '../http.js';
 import { highlight } from '../text.js';
 import type { DisplayHit } from '../search/types.js';
 import { isOnionHostname, onionBrowsePath } from './onion.js';
@@ -234,41 +233,45 @@ async function searchAhmiaOverTor(
   }
 }
 
-/** Clearnet Ahmia still returns .onion URLs — useful when the Ahmia onion is down. */
+/** Ahmia's clearnet index still returns .onion URLs; access it through Tor. */
 async function searchAhmiaClearnet(
   query: string,
   options: TorSearchOptions,
   limit: number,
 ): Promise<{ hits: TorSearchHit[]; error?: string }> {
   try {
-    const home = await fetchWithTimeout(`${AHMIA_CLEARNET_ORIGIN}/`, {
+    const home = await torFetch(`${AHMIA_CLEARNET_ORIGIN}/`, {
+      socksUrl: options.socksUrl,
       timeoutMs: options.timeoutMs ?? 45_000,
-      parentSignal: options.signal,
+      signal: options.signal,
+      maxBytes: 500_000,
       headers: {
         accept: 'text/html',
         'user-agent': 'Mozilla/5.0 (compatible; BeaconSearchTor/1.0)',
       },
     });
-    if (!home.ok) {
+    if (home.status < 200 || home.status >= 400) {
       return { hits: [], error: `Ahmia clearnet home returned HTTP ${home.status}` };
     }
-    const homeHtml = await home.text();
+    const homeHtml = home.body.toString('utf8');
     const token = extractAhmiaFormToken(homeHtml);
     const qs = new URLSearchParams({ q: query });
     if (token) qs.set(token.name, token.value);
-    const response = await fetchWithTimeout(`${AHMIA_CLEARNET_ORIGIN}/search/?${qs.toString()}`, {
+    const response = await torFetch(`${AHMIA_CLEARNET_ORIGIN}/search/?${qs.toString()}`, {
+      socksUrl: options.socksUrl,
       timeoutMs: options.timeoutMs ?? 45_000,
-      parentSignal: options.signal,
+      signal: options.signal,
+      maxBytes: 1_500_000,
       headers: {
         accept: 'text/html',
         'user-agent': 'Mozilla/5.0 (compatible; BeaconSearchTor/1.0)',
         referer: `${AHMIA_CLEARNET_ORIGIN}/`,
       },
     });
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 400) {
       return { hits: [], error: `Ahmia clearnet returned HTTP ${response.status}` };
     }
-    const html = await response.text();
+    const html = response.body.toString('utf8');
     const hits = parseAhmiaHtml(html, limit);
     return { hits };
   } catch (error) {
@@ -291,7 +294,7 @@ async function searchAhmia(
     return {
       hits: clearnet.hits,
       error: overTor.error
-        ? `onion unavailable (${overTor.error}); used clearnet index`
+        ? `onion unavailable (${overTor.error}); used clearnet index over Tor`
         : undefined,
     };
   }
