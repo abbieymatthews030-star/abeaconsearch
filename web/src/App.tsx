@@ -357,6 +357,29 @@ function siteHost(url: string | undefined): string | null {
   }
 }
 
+function HeaderClock(): JSX.Element {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <time
+      className="header__clock"
+      dateTime={now.toISOString()}
+      aria-label={`Local time: ${now.toLocaleTimeString()}`}
+    >
+      {now.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })}
+    </time>
+  );
+}
+
 export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>(() =>
     typeof window !== 'undefined' ? tabFromHash(window.location.hash) : 'search',
@@ -508,6 +531,7 @@ export function App(): JSX.Element {
       <div className="app__glow" aria-hidden />
       <div className="app__grid" aria-hidden />
       <header className="app__header">
+        <HeaderClock />
         {!isHome && (
           <button
             type="button"

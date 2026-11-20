@@ -304,6 +304,7 @@ h3 {
 }
 
 .app__header {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -316,6 +317,17 @@ h3 {
     padding 0.3s ease,
     margin 0.3s ease,
     border-color 0.3s ease;
+}
+
+.header__clock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .app[data-stage='home'] .app__header {
