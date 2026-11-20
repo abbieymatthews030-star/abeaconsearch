@@ -22,7 +22,7 @@ ENV NODE_ENV=production \
     BEACON_CRAWL_ALLOW_PRIVATE=false
 WORKDIR /app
 
-RUN apk add --no-cache tor
+RUN apk add --no-cache tor && touch /app/torrc
 
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -37,4 +37,4 @@ USER beacon
 
 # Vercel sets PORT; do not hardcode BEACON_PORT so the platform port wins.
 EXPOSE 80
-CMD ["sh", "-c", "case \"$(printf '%s' \"${BEACON_TOR_ENABLED:-true}\" | tr '[:upper:]' '[:lower:]' | xargs)\" in true|1|yes|on) tor -f /dev/null --SocksPort 127.0.0.1:9050 --DataDirectory /tmp/beacon-tor & ;; esac; exec node dist/server/index.js"]
+CMD ["sh", "-c", "case \"$(printf '%s' \"${BEACON_TOR_ENABLED:-true}\" | tr '[:upper:]' '[:lower:]' | xargs)\" in true|1|yes|on) tor -f /app/torrc --SocksPort 127.0.0.1:9050 --DataDirectory /tmp/beacon-tor & ;; esac; exec node dist/server/index.js"]
