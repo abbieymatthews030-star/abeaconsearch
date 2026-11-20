@@ -134,14 +134,12 @@ export async function probeTorSocks(
     const text = result.body.toString('utf8');
     try {
       const json = JSON.parse(text) as { IsTor?: boolean; IP?: string };
-      if (json.IsTor === false) {
-        return { ok: false, error: 'SOCKS proxy reachable but traffic is not exiting via Tor' };
+      if (json.IsTor !== true) {
+        return { ok: false, error: 'Tor check did not confirm traffic is exiting via Tor' };
       }
       return { ok: true, exitIp: typeof json.IP === 'string' ? json.IP : undefined };
     } catch {
-      // HTML fallback — presence of the page through the SOCKS path is enough.
-      if (/Congratulations|You are using Tor/i.test(text)) return { ok: true };
-      return { ok: true };
+      return { ok: false, error: 'Tor check returned invalid JSON' };
     }
   } catch (error) {
     return {
