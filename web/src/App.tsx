@@ -982,6 +982,9 @@ function SearchView({
   const showEmpty = Boolean(
     result && query.trim() && hits.length === 0 && !loading && !result.primary,
   );
+  const torIssue = torMode
+    ? result?.diagnostics.find((item) => item.id === 'tor' && item.status !== 'ok')?.detail
+    : undefined;
   // Use live input (not debounced query) so home/hero exits as soon as the
   // shell leaves `data-stage="home"` — avoids duplicate brand chrome while typing.
   const showReady = Boolean(!input.trim() && !loading);
@@ -1148,7 +1151,11 @@ function SearchView({
         )}
 
       {loading && query.trim() && (
-        <p className="search__status">Searching your index and available sources…</p>
+        <p className="search__status">
+          {torMode
+            ? 'Searching onion sources over Tor…'
+            : 'Searching your index and available sources…'}
+        </p>
       )}
 
       {answerError && answerRequested && (
@@ -1321,13 +1328,19 @@ function SearchView({
           <div className={showEmpty ? 'empty empty--quiet' : 'search__actions'}>
             {showEmpty && (
               <>
-                <strong>No good matches for “{query.trim()}”.</strong>
+                <strong>
+                  {torIssue ? 'Tor search unavailable.' : `No good matches for “${query.trim()}”.`}
+                </strong>
                 <span>
-                  {result.outcome === 'error'
-                    ? 'Search sources failed. Check Settings → Sources or try again shortly.'
-                    : result.outcome === 'unconfigured'
-                      ? 'No live search sources are connected. Add pages to your index or enable a web source.'
-                      : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
+                  {torIssue
+                    ? torIssue
+                    : torMode
+                      ? 'No onion results found. Try a different search.'
+                      : result.outcome === 'error'
+                        ? 'Search sources failed. Check Settings → Sources or try again shortly.'
+                        : result.outcome === 'unconfigured'
+                          ? 'No live search sources are connected. Add pages to your index or enable a web source.'
+                          : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}
                 </span>
               </>
             )}
@@ -1344,7 +1357,7 @@ function SearchView({
                     {action.label}
                   </button>
                 ))}
-              {showEmpty && (
+              {showEmpty && !torMode && (
                 <button type="button" className="chip" onClick={() => setAddOpen((open) => !open)}>
                   {addOpen ? 'Cancel' : 'Add a source'}
                 </button>

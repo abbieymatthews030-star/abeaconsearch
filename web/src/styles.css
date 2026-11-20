@@ -424,6 +424,24 @@ h3 {
 }
 
 .app[data-tor='on'] .app__header,
+.app[data-tor='on'] .search:not(.search--home),
+.app[data-tor='on'] .search__box {
+  --bg: #ffffff;
+  --fg: #161019;
+  --muted: #45334d;
+  --faint: #594660;
+  --hair: rgba(22, 16, 25, 0.55);
+  --hair-soft: rgba(22, 16, 25, 0.2);
+  --fail: #8b1735;
+  color-scheme: light;
+  background: #ffffff;
+  color: var(--fg);
+}
+
+.app[data-tor='on'] .search:not(.search--home) {
+  padding: 1rem;
+}
+
 .app[data-tor='on'] .search__box,
 .app[data-tor='on'] .primary-card,
 .app[data-tor='on'] .answer,
@@ -434,26 +452,27 @@ h3 {
   color: var(--fg);
 }
 
-.app[data-tor='on'] .brand h1,
-.app[data-tor='on'] .brand p,
-.app[data-tor='on'] .tor-status,
-.app[data-tor='on'] .app__footer,
-.app[data-tor='on'] .tabs__btn {
+.app[data-tor='on'] .app__footer {
   color: #ffffff;
 }
 
 .app[data-tor='on'] .tabs__btn--active {
-  color: #ffffff;
-  border-bottom-color: #ffffff;
-}
-
-.app[data-tor='on'] .brand .beacon {
-  color: #ffffff;
+  color: var(--fg);
+  border-bottom-color: var(--fg);
 }
 
 .app[data-tor='on'] .result__url,
 .app[data-tor='on'] .result__source {
   color: #4b1d6b;
+}
+
+.app[data-tor='on'] .result__title {
+  font-size: 1.05rem;
+}
+
+.app[data-tor='on'] .result__title a {
+  color: #321049;
+  text-decoration: underline;
 }
 
 .header__tools {
