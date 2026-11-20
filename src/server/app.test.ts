@@ -55,6 +55,9 @@ describe('HTTP API', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.body).toMatch(/onion/i);
+    expect(res.headers['content-security-policy']).toContain('sandbox');
+    expect(res.headers['content-security-policy']).toContain("default-src 'none'");
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
   });
 
   it('returns Tor-mode search diagnostics when SOCKS is unreachable', async () => {

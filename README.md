@@ -13,6 +13,8 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 - **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites.
 - **Tor mode** — one-click onion / Tor-directory search. Results open through Beacon’s
   SOCKS5h proxy (Compose includes a Tor sidecar), so users do not need Tor Browser.
+  Proxied pages are sandboxed: scripts and forms are disabled for safety, so some
+  interactive sites will not work.
 - **Built-in crawler** that indexes a website's pages and respects `robots.txt`.
 - **CLI** (`beacon`) for scripting: add, import, crawl, search, stats, plate.
 - **Zero-config**: every setting has a sane default. Point it at content and go.
@@ -279,6 +281,9 @@ See [`.env.example`](.env.example) for the full list. Common ones:
 | `BEACON_TOR_ENABLED`     | `true`                     | Tor-mode search + onion browse   |
 | `BEACON_TOR_SOCKS`       | `socks5h://127.0.0.1:9050` | Tor SOCKS5h endpoint             |
 | `BEACON_TOR_TIMEOUT_MS`  | `45000`                    | Tor fetch timeout                |
+
+The Vercel container starts a local Tor SOCKS proxy when Tor mode is enabled.
+Tor may take time to connect after a cold start; the UI reports connection failures.
 
 ---
 

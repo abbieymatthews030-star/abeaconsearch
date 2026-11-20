@@ -437,6 +437,11 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       if (!config.tor.enabled) {
         throw new HttpError(503, 'Tor is disabled on this Beacon instance');
       }
+      reply.header(
+        'content-security-policy',
+        "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      reply.header('x-content-type-options', 'nosniff');
       const { url } = z.object({ url: z.string().min(1).max(2048) }).parse(request.query);
       const result = await browseOnion(url, {
         socksUrl: config.tor.socksUrl,
