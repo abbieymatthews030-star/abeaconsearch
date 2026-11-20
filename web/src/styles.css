@@ -1008,17 +1008,6 @@ button {
   animation: hero-rise 0.75s ease-out 0.08s both;
 }
 
-.hero__line {
-  margin: 0;
-  max-width: 26rem;
-  color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.65;
-  letter-spacing: 0.01em;
-  text-transform: none;
-  animation: hero-rise 0.8s ease-out 0.16s both;
-}
-
 .hero__hint {
   margin: 0.15rem 0 0;
   color: var(--faint);
@@ -1066,7 +1055,6 @@ button {
 }
 
 .app[data-tor='on'] .hero__brand,
-.app[data-tor='on'] .hero__line,
 .app[data-tor='on'] .hero__hint {
   color: #ffffff;
 }

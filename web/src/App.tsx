@@ -1118,9 +1118,6 @@ function SearchView({
             <Beacon size={148} />
           </div>
           <h1 className="hero__brand">{siteName}</h1>
-          <p className="hero__line">
-            Open-web search, cited answers, domains, and plates — on your own domain.
-          </p>
           {searchForm}
           <p className="hero__hint">No account required</p>
         </div>
