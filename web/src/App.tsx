@@ -387,6 +387,7 @@ export function App(): JSX.Element {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [input, setInput] = useState(() => initialQueryFromUrl());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const [torMode, setTorMode] = useState(false);
   const clientSettings = useClientSettings();
 
   const selectTab = useCallback((id: Tab) => {
@@ -470,7 +471,6 @@ export function App(): JSX.Element {
   const widthRaw = String(clientSettings.values.contentWidth ?? 'default');
   const contentWidth = widthRaw === 'narrow' || widthRaw === 'wide' ? widthRaw : 'default';
   const reduceMotion = clientSettings.values.reduceMotion === true;
-  const torMode = clientSettings.values.torMode === true;
   const [torStatus, setTorStatus] = useState<TorStatusResponse | null>(null);
 
   useEffect(() => {
@@ -555,10 +555,10 @@ export function App(): JSX.Element {
             aria-pressed={torMode}
             title={
               torMode
-                ? 'Tor mode on — onion results open through Beacon'
+                ? 'Turn off Tor mode and return to regular search'
                 : 'Turn on Tor mode for onion / deep-web search'
             }
-            onClick={() => clientSettings.setValue('torMode', !torMode)}
+            onClick={() => setTorMode((enabled) => !enabled)}
           >
             <span className="tor-toggle__mark" aria-hidden>
               ◉
@@ -606,6 +606,7 @@ export function App(): JSX.Element {
             onCommit={recordHistory}
             health={health}
             clientSettings={clientSettings}
+            torMode={torMode}
             pendingQuery={pendingQuery}
             onPendingConsumed={() => setPendingQuery(null)}
             siteName={siteName}
@@ -672,6 +673,7 @@ function SearchView({
   onCommit,
   health,
   clientSettings,
+  torMode,
   pendingQuery,
   onPendingConsumed,
   siteName,
@@ -681,6 +683,7 @@ function SearchView({
   onCommit: (query: string, kind: QueryKind) => void;
   health: HealthResponse | null;
   clientSettings: ClientSettingsApi;
+  torMode: boolean;
   pendingQuery: string | null;
   onPendingConsumed: () => void;
   siteName: string;
@@ -697,7 +700,6 @@ function SearchView({
   const prefix = clientSettings.values.prefix !== false;
   const webModeRaw = String(clientSettings.values.webMode ?? 'auto');
   const webMode = webModeRaw === 'off' || webModeRaw === 'force' ? webModeRaw : 'auto';
-  const torMode = clientSettings.values.torMode === true;
   const directAnswers = health?.answer.autoAnswer ?? true;
   const citationsVisible = clientSettings.values.citationsVisible !== false;
   const region = clientSettings.values.region;
@@ -736,8 +738,23 @@ function SearchView({
   const [sourceNote, setSourceNote] = useState<string | null>(null);
   const [addingSource, setAddingSource] = useState(false);
   const answerAbort = useRef<AbortController | null>(null);
+  const previousTorMode = useRef(torMode);
 
   useEffect(() => () => answerAbort.current?.abort(), []);
+
+  useEffect(() => {
+    if (previousTorMode.current === torMode) return;
+    previousTorMode.current = torMode;
+    abortRef.current?.abort();
+    answerAbort.current?.abort();
+    setResult(null);
+    setError(null);
+    setAnswer(null);
+    setAnswerError(null);
+    setAnswerRequested(false);
+    setAnswerLoading(false);
+    setLoading(false);
+  }, [torMode]);
 
   useEffect(() => {
     if (pendingQuery == null) return;

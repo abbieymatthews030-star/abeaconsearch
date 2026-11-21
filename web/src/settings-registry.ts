@@ -251,16 +251,6 @@ export const CLIENT_SETTINGS: SettingDefinition[] = [
     defaultValue: true,
   },
   {
-    id: 'torMode',
-    section: 'privacy',
-    label: 'Tor mode',
-    description:
-      'Search onion / Tor-directory results and open them through Beacon’s SOCKS proxy — no Tor Browser required. Needs a reachable Tor SOCKS endpoint (Compose ships one).',
-    type: 'toggle',
-    scope: 'client',
-    defaultValue: false,
-  },
-  {
     id: 'saveSearchHistory',
     section: 'privacy',
     label: 'Save search history',

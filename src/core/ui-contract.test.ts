@@ -32,4 +32,11 @@ describe('ui contract', () => {
     const missing = [...new Set(fields)].filter((field) => !app.includes(field));
     expect(missing).toEqual([]);
   });
+
+  it('keeps Tor mode transient and controlled by the header button', () => {
+    expect(CLIENT_SETTINGS.some((setting) => setting.id === 'torMode')).toBe(false);
+    expect(app).toContain('const [torMode, setTorMode] = useState(false);');
+    expect(app).toContain('onClick={() => setTorMode((enabled) => !enabled)}');
+    expect(app).not.toContain('clientSettings.values.torMode');
+  });
 });
