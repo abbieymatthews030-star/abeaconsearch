@@ -5,7 +5,7 @@ import { roundMs } from '../timing.js';
 import type { BeaconDocument, SearchQuery, SearchResponse } from '../types.js';
 import type { AnnotatedWebResult, WebBackend } from './fanout.js';
 import { fanOutWebSearch } from './fanout.js';
-import { buildSearchActions, detectIntent, stripQuotes, wantsDeepWebSources } from './intent.js';
+import { buildSearchActions, detectIntent, stripQuotes } from './intent.js';
 import {
   assessLocalHit,
   canonicalUrl,
@@ -72,35 +72,6 @@ const WEB_MIN_LIMIT = 8;
 const SNIPPET_MAX_CHARS = 320;
 const BODY_SCORE_SLICE = 400;
 const SUMMARY_MIN_BODY_CHARS = 40;
-/** Enough fast-tier hits to skip the deep scholarly wave on everyday queries. */
-const FAST_TIER_ENOUGH = 3;
-
-function backendTier(backend: WebBackend): 'fast' | 'deep' {
-  return backend.tier ?? 'fast';
-}
-
-function mergeFanResults(
-  ...fans: Array<{
-    results: AnnotatedWebResult[];
-    attempts: SearchDiagnostic[];
-    queriesTried: string[];
-  }>
-): { results: AnnotatedWebResult[]; attempts: SearchDiagnostic[]; queriesTried: string[] } {
-  const results: AnnotatedWebResult[] = [];
-  const attempts: SearchDiagnostic[] = [];
-  const queriesTried: string[] = [];
-  for (const fan of fans) {
-    results.push(...fan.results);
-    attempts.push(...fan.attempts);
-    for (const tried of fan.queriesTried) {
-      if (!queriesTried.some((existing) => existing.toLowerCase() === tried.toLowerCase())) {
-        queriesTried.push(tried);
-      }
-    }
-  }
-  return { results, attempts, queriesTried };
-}
-
 function webModeOf(options: RunSearchOptions): WebMode {
   return options.web ?? 'auto';
 }
@@ -251,11 +222,18 @@ function outcomeFor(results: number, diagnostics: SearchDiagnostic[]): SearchOut
   const providers = diagnostics.filter((item) => item.id !== 'local_index');
   const configured = providers.filter((item) => item.status !== 'not_configured');
   const failed = providers.filter((item) => item.status === 'error');
-  if (results > 0 && failed.length > 0) return 'partial';
-  if (results > 0) return 'results';
+  const incomplete = providers.filter(
+    (item) => item.status === 'skipped' && /budget|exhaust|abort|unfinish/i.test(item.detail),
+  );
+  if (results > 0) return failed.length > 0 || incomplete.length > 0 ? 'partial' : 'results';
   if (configured.length === 0) return 'unconfigured';
-  // Every configured provider failed and nothing was returned — not a soft "partial".
-  if (failed.length > 0 && failed.length === configured.length) return 'error';
+  if (
+    failed.length + incomplete.length > 0 &&
+    failed.length + incomplete.length === configured.length
+  ) {
+    return 'error';
+  }
+  if (failed.length > 0 || incomplete.length > 0) return 'partial';
   return 'empty';
 }
 
@@ -266,12 +244,7 @@ function synthesisFor(query: string, results: Ranked[]): SynthesisState {
     : 'insufficient';
 }
 
-/**
- * Fast-tier providers first (Brave / Tavily / SearXNG / DuckDuckGo / Wikipedia)
- * under a shared budget. Deep scholarly / archive sources join the first wave
- * only for research-shaped queries; otherwise they run as a short second wave
- * when the fast tier returned nothing useful.
- */
+/** Query every configured source concurrently under one shared deadline. */
 async function runTieredWebSearch(options: {
   backends: WebBackend[];
   query: string;
@@ -284,75 +257,14 @@ async function runTieredWebSearch(options: {
   attempts: SearchDiagnostic[];
   queriesTried: string[];
 }> {
-  const started = performance.now();
-  const fast = options.backends.filter((backend) => backendTier(backend) === 'fast');
-  const deep = options.backends.filter((backend) => backendTier(backend) === 'deep');
-  const includeDeepUpFront = deep.length > 0 && wantsDeepWebSources(options.query, options.intent);
-
-  const firstWave = includeDeepUpFront ? [...fast, ...deep] : fast;
-  const deferredDeep = includeDeepUpFront ? [] : deep;
-
-  const primary = await fanOutWebSearch({
-    backends: firstWave,
+  return fanOutWebSearch({
+    backends: options.backends,
     query: options.query,
     intent: options.intent,
     limit: options.limit,
     signal: options.signal,
     filter: 'strict',
     budgetMs: options.budgetMs,
-  });
-
-  const idleDeepSkipped = deferredDeep
-    .filter((backend) => !backend.provider)
-    .map((backend) => ({
-      id: backend.id,
-      label: backend.label,
-      status: 'not_configured' as const,
-      detail: `not configured — set ${backend.missingEnv.join(' or ')}`,
-      missingEnv: backend.missingEnv,
-      resultCount: 0,
-    }));
-
-  if (
-    deferredDeep.some((backend) => backend.provider) &&
-    primary.results.length < FAST_TIER_ENOUGH
-  ) {
-    const remaining = Math.max(0, options.budgetMs - Math.round(performance.now() - started));
-    if (remaining > 0 && !options.signal?.aborted) {
-      const secondary = await fanOutWebSearch({
-        backends: deferredDeep,
-        query: options.query,
-        intent: options.intent,
-        limit: options.limit,
-        signal: options.signal,
-        filter: 'strict',
-        budgetMs: remaining,
-      });
-      return mergeFanResults(primary, {
-        ...secondary,
-        attempts: [...idleDeepSkipped, ...secondary.attempts],
-      });
-    }
-  }
-
-  const deepSkipped = deferredDeep
-    .filter((backend) => backend.provider)
-    .map((backend) => ({
-      id: backend.id,
-      label: backend.label,
-      status: 'skipped' as const,
-      detail:
-        primary.results.length >= FAST_TIER_ENOUGH
-          ? 'fast-tier results were enough'
-          : 'search budget exhausted before deep sources',
-      missingEnv: [],
-      resultCount: 0,
-    }));
-
-  return mergeFanResults(primary, {
-    results: [],
-    attempts: [...idleDeepSkipped, ...deepSkipped],
-    queriesTried: [],
   });
 }
 
@@ -415,8 +327,7 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
   const shouldWeb =
     webMode !== 'off' &&
     query.trim().length > 0 &&
-    WEB_INTENTS.has(intent) &&
-    (webMode === 'force' || localRanked.length === 0 || intent !== 'general');
+    WEB_INTENTS.has(intent);
 
   const specs = options.backends ?? describeWebProviders(options.config);
   const fan = shouldWeb
@@ -471,17 +382,8 @@ export async function runUniversalSearch(options: RunSearchOptions): Promise<Sea
     };
   });
 
-  // When the exact phrase is present, drop leftover single-token collisions
-  // such as a different person who only shares a surname.
-  const phrase = tokens.join(' ');
-  const full = webRanked.filter((item) => {
-    const hay = `${item.plainTitle} ${item.hit.snippet.replace(/<[^>]+>/g, ' ')}`.toLowerCase();
-    return Boolean(phrase) && hay.includes(phrase);
-  });
-  const webKept = full.length > 0 ? full : webRanked;
-
   const search = options.search;
-  const merged = dedupe([...localRanked, ...webKept])
+  const merged = dedupe([...localRanked, ...webRanked])
     .filter((item) => passesFilters(item, search))
     .sort((a, b) => compareRanked(search.sort, a, b));
   const page = merged.slice(options.search.offset, options.search.offset + options.search.limit);

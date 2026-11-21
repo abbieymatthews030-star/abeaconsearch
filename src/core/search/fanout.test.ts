@@ -72,4 +72,67 @@ describe('fanOutWebSearch', () => {
     expect(result.results).toHaveLength(1);
     expect(result.attempts[0]?.status).toBe('ok');
   });
+
+  it('retries broader variants after a transient provider failure', async () => {
+    const calls: string[] = [];
+    const result = await fanOutWebSearch({
+      backends: [
+        backend('flaky', async (q) => {
+          calls.push(q);
+          if (q === '"abbiey matthews"') throw new Error('temporary failure');
+          if (q === 'abbey matthews') {
+            return [
+              {
+                title: 'Abbey Matthews',
+                url: 'https://example.com/abbey',
+                snippet: 'Abbey Matthews',
+              },
+            ];
+          }
+          return [];
+        }),
+      ],
+      query: 'abbiey matthews',
+      intent: 'person',
+      limit: 5,
+      filter: 'strict',
+      budgetMs: 2_000,
+    });
+
+    expect(calls).toContain('abbey matthews');
+    expect(result.results.map((hit) => hit.url)).toEqual(['https://example.com/abbey']);
+    expect(result.attempts[0]?.status).toBe('ok');
+    expect(result.attempts[0]?.detail).toMatch(/retried 1 failed response/i);
+  });
+
+  it('marks an empty result partial when one completed source is healthy and another times out', async () => {
+    const result = await fanOutWebSearch({
+      backends: [
+        backend('empty', async () => []),
+        backend('slow', async (_q, _limit, signal) => {
+          await new Promise<void>((resolve, reject) => {
+            signal?.addEventListener(
+              'abort',
+              () => {
+                const error = new Error('aborted');
+                error.name = 'AbortError';
+                reject(error);
+              },
+              { once: true },
+            );
+          });
+          return [];
+        }),
+      ],
+      query: 'missing result',
+      intent: 'general',
+      limit: 5,
+      filter: 'strict',
+      budgetMs: 30,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.attempts.find((item) => item.id === 'empty')?.status).toBe('ok');
+    expect(result.attempts.find((item) => item.id === 'slow')?.status).toBe('skipped');
+  });
 });

@@ -127,6 +127,25 @@ describe('runUniversalSearch', () => {
     expect(result.results.some((hit) => hit.id === 'minisearch-ranking-explained')).toBe(true);
   });
 
+  it('accepts partial name prefixes from the local index', async () => {
+    const engine = new SearchEngine();
+    engine.upsert({
+      id: 'abbiey-profile',
+      title: 'Abbiey Matthews',
+      body: 'Abbiey Matthews profile.',
+      tags: ['person'],
+    });
+    const result = await runUniversalSearch({
+      query: 'abb matt',
+      search: searchQuery('abb matt'),
+      engine,
+      config,
+      web: 'off',
+    });
+
+    expect(result.results.map((hit) => hit.id)).toContain('abbiey-profile');
+  });
+
   it('returns the other provider when one provider fails', async () => {
     const engine = new SearchEngine();
     const result = await runUniversalSearch({
@@ -186,6 +205,41 @@ describe('runUniversalSearch', () => {
 
     expect(result.results).toEqual([]);
     expect(result.outcome).toBe('error');
+  });
+
+  it('returns partial when a source times out even though another source completes empty', async () => {
+    const engine = new SearchEngine();
+    const result = await runUniversalSearch({
+      query: 'missing person name',
+      search: searchQuery('missing person name'),
+      engine,
+      config: { ...config, searchBudgetMs: 30 },
+      backends: [
+        backend('Empty Search', async () => []),
+        backend('Slow Search', async (_q, _limit, signal) => {
+          await new Promise<void>((resolve, reject) => {
+            signal?.addEventListener(
+              'abort',
+              () => {
+                const error = new Error('aborted');
+                error.name = 'AbortError';
+                reject(error);
+              },
+              { once: true },
+            );
+          });
+          return [];
+        }),
+      ],
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.outcome).toBe('partial');
+    expect(
+      result.diagnostics.some(
+        (item) => item.id === 'slow search' && item.detail.toLowerCase().includes('budget'),
+      ),
+    ).toBe(true);
   });
 
   it('names the missing provider settings when nothing is configured', async () => {
@@ -278,9 +332,17 @@ describe('runUniversalSearch', () => {
       ],
     });
 
-    expect(calls).toEqual(['"abbiey matthews"']);
+    expect(calls[0]).toBe('"abbiey matthews"');
+    expect(calls).toContain('abbiey matthews');
+    expect(calls).toContain('matthews abbiey');
+    expect(calls).toContain('abbey matthews');
     expect(result.results[0]?.url).toBe('https://example.com/exact');
-    expect(result.queriesTried).toEqual(['"abbiey matthews"']);
+    expect(result.queriesTried).toEqual([
+      '"abbiey matthews"',
+      'abbiey matthews',
+      'matthews abbiey',
+      'abbey matthews',
+    ]);
   });
 
   it('falls back to a spelling variant when the exact name finds nothing', async () => {
@@ -377,11 +439,11 @@ describe('runUniversalSearch', () => {
     expect(oldest.results.map((hit) => hit.id)).toEqual(['older-doc', 'newer-doc']);
   });
 
-  it('forces a web search for a general query that already has local hits', async () => {
+  it('checks the web for a general query that already has local hits', async () => {
     const engine = new SearchEngine();
     miniSearchDoc(engine);
     let calls = 0;
-    const skipped = await runUniversalSearch({
+    const automatic = await runUniversalSearch({
       query: 'minisearch ranking',
       search: searchQuery('minisearch ranking'),
       engine,
@@ -393,10 +455,8 @@ describe('runUniversalSearch', () => {
         }),
       ],
     });
-    expect(calls).toBe(0);
-    expect(skipped.diagnostics.some((item) => item.detail === 'local results were relevant')).toBe(
-      true,
-    );
+    expect(calls).toBeGreaterThan(0);
+    expect(automatic.diagnostics.some((item) => item.id === 'duckduckgo')).toBe(true);
 
     const forced = await runUniversalSearch({
       query: 'minisearch ranking',
@@ -417,11 +477,11 @@ describe('runUniversalSearch', () => {
         }),
       ],
     });
-    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBeGreaterThan(1);
     expect(forced.results.some((hit) => hit.origin === 'web')).toBe(true);
   });
 
-  it('skips deep scholarly backends when the fast tier already has enough hits', async () => {
+  it('searches deep sources even when the fast tier has useful hits', async () => {
     const engine = new SearchEngine();
     let deepCalls = 0;
     const result = await runUniversalSearch({
@@ -454,7 +514,7 @@ describe('runUniversalSearch', () => {
             return [
               {
                 title: 'Should not run',
-                url: 'https://openalex.org/should-not',
+                url: 'https://openalex.org/also-found',
                 snippet: 'Abbiey Matthews paper.',
               },
             ];
@@ -465,13 +525,53 @@ describe('runUniversalSearch', () => {
       ],
     });
 
-    expect(deepCalls).toBe(0);
+    expect(deepCalls).toBeGreaterThan(0);
     expect(result.results.length).toBeGreaterThan(0);
     expect(
       result.diagnostics.some(
-        (item) => item.id === 'openalex' && item.detail === 'fast-tier results were enough',
+        (item) => item.id === 'openalex' && item.status === 'ok' && item.resultCount === 1,
       ),
     ).toBe(true);
+  });
+
+  it('retries a source after an unusable response and combines unique hits', async () => {
+    const engine = new SearchEngine();
+    const calls: string[] = [];
+    const result = await runUniversalSearch({
+      query: 'abbiey matthews',
+      search: searchQuery('abbiey matthews'),
+      engine,
+      config,
+      backends: [
+        backend('DuckDuckGo', async (q) => {
+          calls.push(q);
+          if (q === '"abbiey matthews"') {
+            return [{ title: '', url: 'javascript:alert(1)' }];
+          }
+          return [
+            {
+              title: 'Abbey Matthews',
+              url: 'https://example.com/abbey',
+              snippet: 'Abbey Matthews profile.',
+            },
+          ];
+        }),
+        backend('Wikipedia', async () => [
+          {
+            title: 'Abbey Matthews',
+            url: 'https://example.com/abbey?utm_source=test',
+            snippet: 'Abbey Matthews profile.',
+          },
+        ]),
+      ],
+    });
+
+    expect(calls.length).toBeGreaterThan(1);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.url).toBe('https://example.com/abbey');
+    expect(result.diagnostics.find((item) => item.id === 'duckduckgo')?.detail).toMatch(
+      /retried.*unusable/i,
+    );
   });
 
   it('does not treat matthews as a fuzzy match for matches', () => {

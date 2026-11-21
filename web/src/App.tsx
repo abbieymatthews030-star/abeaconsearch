@@ -1329,15 +1329,25 @@ function SearchView({
             {showEmpty && (
               <>
                 <strong>
-                  {torIssue ? 'Tor search unavailable.' : `No good matches for “${query.trim()}”.`}
+                  {torIssue
+                    ? 'Tor search unavailable.'
+                    : result.outcome === 'partial'
+                      ? 'Search is incomplete.'
+                      : result.outcome === 'error'
+                        ? 'Search could not finish.'
+                        : result.outcome === 'unconfigured'
+                          ? 'No live search source is connected.'
+                          : `No matches from the sources checked for “${query.trim()}”.`}
                 </strong>
                 <span>
                   {torIssue
                     ? torIssue
                     : torMode
                       ? 'No onion results found. Try a different search.'
+                      : result.outcome === 'partial'
+                        ? 'One or more sources failed, timed out, or returned unusable data. Results may be missing; try again shortly.'
                       : result.outcome === 'error'
-                        ? 'Search sources failed. Check Settings → Sources or try again shortly.'
+                        ? 'The available search sources failed or could not finish. Check Settings → Sources or try again shortly.'
                         : result.outcome === 'unconfigured'
                           ? 'No live search sources are connected. Add pages to your index or enable a web source.'
                           : 'Try a shorter phrase, another spelling, or add the page you expected to find.'}

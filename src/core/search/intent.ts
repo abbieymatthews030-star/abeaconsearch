@@ -125,6 +125,7 @@ export function spellingVariant(raw: string): string | null {
     .filter(Boolean)
     .map((token) => {
       if (/iey$/i.test(token) && token.length > 4) return `${token.slice(0, -3)}ey`;
+      if (/ey$/i.test(token) && token.length > 4) return `${token.slice(0, -2)}ie`;
       return token;
     })
     .join(' ');
@@ -175,6 +176,8 @@ export function queryVariants(raw: string, intent: SearchIntent): string[] {
   } else {
     push(plain);
     if (plain.split(/\s+/).length > 1) push(`"${plain}"`);
+    const spelled = spellingVariant(plain);
+    if (spelled) push(spelled);
   }
   return out.slice(0, 4);
 }

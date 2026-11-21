@@ -70,14 +70,25 @@ function tokenHit(
   for (const have of pool) {
     if (
       allowPrefix &&
-      term.length >= 4 &&
-      (have.startsWith(term) || (term.startsWith(have) && have.length >= 4))
+      term.length >= 3 &&
+      (have.startsWith(term) || (term.startsWith(have) && have.length >= 3))
     ) {
       return 'prefix';
     }
     if (allowFuzzy && isCloseSpelling(term, have)) return 'close';
   }
   return null;
+}
+
+function tokenMatch(term: string, hayTokens: string[], hay: string): boolean {
+  if (hay.includes(term)) return true;
+  return hayTokens.some(
+    (candidate) =>
+      (term.length >= 3 &&
+        candidate.length >= 3 &&
+        (candidate.startsWith(term) || term.startsWith(candidate))) ||
+      isCloseSpelling(term, candidate),
+  );
 }
 
 export function assessLocalHit(
@@ -105,8 +116,8 @@ export function assessLocalHit(
 
   if (options.intent === 'person' || options.intent === 'company') {
     const everyName = tokens.every((term) => {
-      const kind = tokenHit(term, allTokens, false, options.fuzzy);
-      return kind === 'exact' || kind === 'close';
+      const kind = tokenHit(term, allTokens, options.prefix, options.fuzzy);
+      return kind === 'exact' || kind === 'prefix' || kind === 'close';
     });
     return { ok: everyName, coverage: everyName ? 1 : coverage, helpFactor: help ? 0.55 : 1 };
   }
@@ -197,8 +208,12 @@ export function scoreMatch(
   if (phrase && titleL.includes(phrase)) score += 5;
   if (phrase && textL.includes(phrase)) score += 3;
   if (tokens.length > 0) {
-    const titleHits = tokens.filter((term) => titleL.includes(term)).length / tokens.length;
-    const textHits = tokens.filter((term) => textL.includes(term)).length / tokens.length;
+    const titleTokens = tokenize(titleL);
+    const textTokens = tokenize(textL);
+    const titleHits =
+      tokens.filter((term) => tokenMatch(term, titleTokens, titleL)).length / tokens.length;
+    const textHits =
+      tokens.filter((term) => tokenMatch(term, textTokens, textL)).length / tokens.length;
     score += titleHits * 2;
     score += textHits * 1.2;
     if (titleHits === 1) score += 0.4;
@@ -214,9 +229,10 @@ export function webHitIsRelevant(
   snippet: string | undefined,
 ): boolean {
   const hay = `${title} ${snippet ?? ''}`.toLowerCase();
+  const hayTokens = tokenize(hay);
   const covers = (tokens: string[]) => {
     if (tokens.length === 0) return 0;
-    return tokens.filter((term) => hay.includes(term)).length / tokens.length;
+    return tokens.filter((term) => tokenMatch(term, hayTokens, hay)).length / tokens.length;
   };
   const originalTokens = significantTokens(original);
   const variantTokens = significantTokens(variant);

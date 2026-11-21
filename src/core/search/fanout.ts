@@ -29,11 +29,28 @@ function isAbortError(err: unknown): boolean {
   return name === 'AbortError' || name === 'TimeoutError';
 }
 
+function usableHits(value: unknown): { hits: WebResult[]; rejected: number } {
+  if (!Array.isArray(value)) throw new Error('provider returned unusable search data');
+  const hits = value.filter((hit): hit is WebResult => {
+    if (!hit || typeof hit !== 'object') return false;
+    const candidate = hit as Partial<WebResult>;
+    if (typeof candidate.title !== 'string' || candidate.title.trim().length === 0) return false;
+    if (typeof candidate.url !== 'string') return false;
+    if (candidate.snippet !== undefined && typeof candidate.snippet !== 'string') return false;
+    try {
+      const url = new URL(candidate.url);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+  return { hits, rejected: value.length - hits.length };
+}
+
 /**
  * Ask every configured provider at once. A failure in one provider is recorded
- * and does not cancel the others. Variants run from exact to broad, and stop
- * once a provider has relevant hits — or once a later variant comes back
- * obviously unrelated.
+ * and does not cancel the others. Each provider retries broader variants and
+ * accumulates relevant hits across them.
  *
  * When `budgetMs` is set, unfinished backends are aborted and marked skipped so
  * a single slow source cannot hold the whole response.
@@ -119,7 +136,10 @@ async function runBackend(
   const started = performance.now();
   const tried: string[] = [];
   const hits: AnnotatedWebResult[] = [];
-  let error: string | undefined;
+  const seenUrls = new Set<string>();
+  const errors: string[] = [];
+  let rejectedHits = 0;
+  let successfulResponses = 0;
   let skippedForBudget = false;
 
   // Callers only pass backends that already have a provider (active filter).
@@ -132,36 +152,44 @@ async function runBackend(
     if (!variant) continue;
     if (options.signal?.aborted) {
       skippedForBudget = wasBudgetExhausted();
-      if (!skippedForBudget && hits.length === 0 && !error) {
-        error = 'aborted';
+      if (!skippedForBudget && hits.length === 0 && errors.length === 0) {
+        errors.push('aborted');
       }
       break;
     }
     tried.push(variant);
     try {
-      const found = await provider.search(variant, options.limit, options.signal);
+      const response = await provider.search(variant, options.limit, options.signal);
+      const sanitized = usableHits(response);
+      const found = sanitized.hits;
+      rejectedHits += sanitized.rejected;
+      if (response.length > 0 && found.length === 0) {
+        throw new Error('provider returned only unusable search results');
+      }
+      successfulResponses += 1;
       const relevant =
         options.filter === 'off'
           ? found
           : found.filter((hit) => webHitIsRelevant(options.query, variant, hit.title, hit.snippet));
       if (relevant.length > 0) {
         for (const hit of relevant) {
+          const key = new URL(hit.url);
+          key.hash = '';
+          if (seenUrls.has(key.toString())) continue;
+          seenUrls.add(key.toString());
           hits.push({ ...hit, provider: provider.name, providerId: backend.id });
         }
-        break;
       }
-      // Early variants (exact, normalized) can miss without the query being
-      // unrelated. Later variants that come back populated but off-topic are
-      // the signal to stop broadening.
-      if (options.filter === 'strict' && i >= 2 && found.length > 0) break;
     } catch (err) {
       if (isAbortError(err) || options.signal?.aborted) {
         skippedForBudget = wasBudgetExhausted();
-        if (!skippedForBudget) error = err instanceof Error ? err.message : String(err);
-        break;
+        if (!skippedForBudget && options.signal?.aborted) {
+          errors.push(err instanceof Error ? err.message : String(err));
+          break;
+        }
+        if (skippedForBudget) break;
       }
-      error = err instanceof Error ? err.message : String(err);
-      break;
+      errors.push(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -188,8 +216,15 @@ async function runBackend(
     diagnostic: {
       id: backend.id,
       label: backend.label,
-      status: error ? 'error' : 'ok',
-      detail: error ?? (hits.length > 0 ? `${hits.length} relevant` : 'no relevant results'),
+      status: errors.length > 0 && successfulResponses === 0 && hits.length === 0 ? 'error' : 'ok',
+      detail:
+        errors.length > 0
+          ? `${hits.length > 0 ? `${hits.length} relevant` : 'no results'}; retried ${errors.length} failed response${errors.length === 1 ? '' : 's'} (${errors[errors.length - 1]})`
+          : rejectedHits > 0
+            ? `${hits.length} relevant; discarded ${rejectedHits} unusable result${rejectedHits === 1 ? '' : 's'}`
+          : hits.length > 0
+            ? `${hits.length} relevant`
+            : 'no relevant results',
       missingEnv: [],
       tookMs,
       resultCount: hits.length,
