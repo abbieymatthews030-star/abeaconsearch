@@ -11,10 +11,14 @@ vi.mock('node:https', async () => {
         Object.assign(request, {
           end: () =>
             queueMicrotask(() => {
+              const status = response.status;
+              const location = response.location;
+              response.status = 200;
+              response.location = '';
               const incoming = Object.assign(new EventEmitter(), {
-                statusCode: response.status,
+                statusCode: status,
                 statusMessage: 'OK',
-                headers: response.location ? { location: response.location } : {},
+                headers: location ? { location } : {},
               });
               callback(incoming);
               incoming.emit('data', Buffer.from(response.body));
@@ -28,7 +32,7 @@ vi.mock('node:https', async () => {
   };
 });
 
-import { probeTorSocks } from './socks-fetch.js';
+import { probeTorSocks, torFetch } from './socks-fetch.js';
 
 describe('Tor SOCKS verification', () => {
   beforeEach(() => {
@@ -43,6 +47,19 @@ describe('Tor SOCKS verification', () => {
       ok: true,
       exitIp: '192.0.2.1',
     });
+  });
+
+  it('follows redirects and returns the final URL', async () => {
+    const target =
+      'https://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/final';
+    response.status = 302;
+    response.location = target;
+    const result = await torFetch(
+      'https://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/start',
+      { socksUrl: 'socks5h://127.0.0.1:9050' },
+    );
+
+    expect(result.finalUrl).toBe(target);
   });
 
   it.each(['{"IsTor":false}', '{}', '<html>unexpected response</html>'])(

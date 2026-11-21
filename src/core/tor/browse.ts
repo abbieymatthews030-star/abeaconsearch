@@ -11,11 +11,18 @@ export interface BrowseOptions {
 
 export type BrowseResult =
   | { kind: 'html'; status: number; html: string; finalUrl: string }
-  | { kind: 'raw'; status: number; contentType: string; body: Buffer; finalUrl: string }
+  | {
+      kind: 'raw';
+      status: number;
+      contentType: string;
+      body: Buffer;
+      finalUrl: string;
+      contentDisposition?: string;
+    }
   | { kind: 'error'; status: number; message: string };
 
 function rewriteCssUrls(css: string, baseUrl: string): string {
-  return css.replace(
+  const rewrittenUrls = css.replace(
     /url\(\s*(?:(["'])(.*?)\1|([^)]*))\s*\)/gi,
     (original, _quote: string | undefined, quoted: string | undefined, unquoted: string) => {
       const value = (quoted ?? unquoted ?? '').trim();
@@ -24,6 +31,19 @@ function rewriteCssUrls(css: string, baseUrl: string): string {
         const absolute = new URL(value, baseUrl);
         return isOnionHostname(absolute.hostname)
           ? `url("${onionBrowsePath(absolute.toString())}")`
+          : original;
+      } catch {
+        return original;
+      }
+    },
+  );
+  return rewrittenUrls.replace(
+    /@import\s+(["'])(.*?)\1/gi,
+    (original, _quote: string, value: string) => {
+      try {
+        const absolute = new URL(value, baseUrl);
+        return isOnionHostname(absolute.hostname)
+          ? `@import "${onionBrowsePath(absolute.toString())}"`
           : original;
       } catch {
         return original;
@@ -153,6 +173,7 @@ export async function browseOnion(rawUrl: string, options: BrowseOptions): Promi
         contentType,
         body: Buffer.from(rewriteCssUrls(result.body.toString('utf8'), result.finalUrl)),
         finalUrl: result.finalUrl,
+        contentDisposition: result.headers.get('content-disposition') ?? undefined,
       };
     }
     return {
@@ -161,6 +182,7 @@ export async function browseOnion(rawUrl: string, options: BrowseOptions): Promi
       contentType,
       body: result.body,
       finalUrl: result.finalUrl,
+      contentDisposition: result.headers.get('content-disposition') ?? undefined,
     };
   } catch (error) {
     return {

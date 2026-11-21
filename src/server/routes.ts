@@ -439,7 +439,7 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       }
       reply.header(
         'content-security-policy',
-        "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'",
+        "sandbox allow-same-origin allow-downloads allow-popups; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'",
       );
       reply.header('x-content-type-options', 'nosniff');
       const { url } = z.object({ url: z.string().min(1).max(2048) }).parse(request.query);
@@ -457,6 +457,9 @@ export const apiRoutes = (ctx: RouteContext): FastifyPluginAsync => {
       }
       reply.status(result.status);
       reply.header('content-type', result.contentType);
+      if (result.contentDisposition) {
+        reply.header('content-disposition', result.contentDisposition);
+      }
       return reply.send(result.body);
     });
 

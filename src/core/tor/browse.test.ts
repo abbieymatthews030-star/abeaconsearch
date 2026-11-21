@@ -55,6 +55,11 @@ describe('onion browser', () => {
     if (result.kind !== 'raw') return;
     expect(result.body.toString()).toContain(
       encodeURIComponent(
+        'http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/base.css',
+      ),
+    );
+    expect(result.body.toString()).toContain(
+      encodeURIComponent(
         'http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/path/images/a.png',
       ),
     );

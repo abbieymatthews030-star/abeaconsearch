@@ -131,10 +131,12 @@ export async function torFetch(url: string, options: TorFetchOptions): Promise<T
     const location = result.headers.get('location');
     if (
       !location ||
-      ![301, 302, 303, 307, 308].includes(result.status) ||
-      redirects >= maxRedirects
+      ![301, 302, 303, 307, 308].includes(result.status)
     ) {
       return result;
+    }
+    if (redirects >= maxRedirects) {
+      throw new Error(`Tor request exceeded ${maxRedirects} redirects`);
     }
 
     const target = new URL(location, currentUrl);
@@ -145,7 +147,10 @@ export async function torFetch(url: string, options: TorFetchOptions): Promise<T
       throw new Error(`redirect to disallowed host: ${target.hostname}`);
     }
 
-    if (result.status === 303 || ((result.status === 301 || result.status === 302) && method !== 'GET')) {
+    if (
+      result.status === 303 ||
+      ((result.status === 301 || result.status === 302) && method !== 'GET')
+    ) {
       method = 'GET';
       body = undefined;
     }
