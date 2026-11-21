@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const response = vi.hoisted(() => ({ body: '', status: 200 }));
+const response = vi.hoisted(() => ({ body: '', status: 200, location: '' }));
 
 vi.mock('node:https', async () => {
   const { EventEmitter } = await import('node:events');
@@ -14,7 +14,7 @@ vi.mock('node:https', async () => {
               const incoming = Object.assign(new EventEmitter(), {
                 statusCode: response.status,
                 statusMessage: 'OK',
-                headers: {},
+                headers: response.location ? { location: response.location } : {},
               });
               callback(incoming);
               incoming.emit('data', Buffer.from(response.body));
@@ -34,6 +34,7 @@ describe('Tor SOCKS verification', () => {
   beforeEach(() => {
     response.status = 200;
     response.body = '';
+    response.location = '';
   });
 
   it('accepts a positive Tor Project check', async () => {

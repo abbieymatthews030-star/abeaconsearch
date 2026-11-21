@@ -133,6 +133,11 @@ export interface DocumentsResponse {
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path) || !path.startsWith('/')) return path;
+  return `${BASE.replace(/\/+$/, '')}${path}`;
+}
+
 function errorMessage(payload: unknown, status: number): string {
   if (!payload || typeof payload !== 'object') return `Request failed with ${status}`;
   const body = payload as {

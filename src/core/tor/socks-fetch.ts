@@ -10,6 +10,10 @@ export interface TorFetchOptions {
   signal?: AbortSignal;
   /** Max response body bytes to buffer (default 2 MiB). */
   maxBytes?: number;
+  /** Maximum number of redirects to follow (default 5). */
+  maxRedirects?: number;
+  /** Reject redirects to destinations outside the intended trust boundary. */
+  validateRedirect?: (url: URL) => boolean;
   /** socks5h URL so Tor resolves .onion names (required for onion hosts). */
   socksUrl: string;
 }
@@ -26,7 +30,7 @@ export interface TorFetchResult {
  * HTTP(S) fetch through a Tor SOCKS5h proxy. Uses Node's http/https stack with
  * socks-proxy-agent so DNS for .onion names is resolved inside Tor, not locally.
  */
-export async function torFetch(url: string, options: TorFetchOptions): Promise<TorFetchResult> {
+async function torFetchOnce(url: string, options: TorFetchOptions): Promise<TorFetchResult> {
   const parsed = new URL(url);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`unsupported protocol: ${parsed.protocol}`);
@@ -114,6 +118,39 @@ export async function torFetch(url: string, options: TorFetchOptions): Promise<T
     if (options.body) req.write(options.body);
     req.end();
   });
+}
+
+export async function torFetch(url: string, options: TorFetchOptions): Promise<TorFetchResult> {
+  const maxRedirects = Math.max(0, options.maxRedirects ?? 5);
+  let currentUrl = new URL(url);
+  let method = options.method ?? 'GET';
+  let body = options.body;
+
+  for (let redirects = 0; ; redirects += 1) {
+    const result = await torFetchOnce(currentUrl.toString(), { ...options, method, body });
+    const location = result.headers.get('location');
+    if (
+      !location ||
+      ![301, 302, 303, 307, 308].includes(result.status) ||
+      redirects >= maxRedirects
+    ) {
+      return result;
+    }
+
+    const target = new URL(location, currentUrl);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      throw new Error(`redirect used unsupported protocol: ${target.protocol}`);
+    }
+    if (options.validateRedirect && !options.validateRedirect(target)) {
+      throw new Error(`redirect to disallowed host: ${target.hostname}`);
+    }
+
+    if (result.status === 303 || ((result.status === 301 || result.status === 302) && method !== 'GET')) {
+      method = 'GET';
+      body = undefined;
+    }
+    currentUrl = target;
+  }
 }
 
 /** Quick SOCKS reachability probe — fetches Tor Project's check endpoint over Tor. */

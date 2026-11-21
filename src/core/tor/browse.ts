@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { onionBrowsePath, parseOnionUrl } from './onion.js';
+import { isOnionHostname, onionBrowsePath, parseOnionUrl } from './onion.js';
 import { torFetch } from './socks-fetch.js';
 
 export interface BrowseOptions {
@@ -14,9 +14,45 @@ export type BrowseResult =
   | { kind: 'raw'; status: number; contentType: string; body: Buffer; finalUrl: string }
   | { kind: 'error'; status: number; message: string };
 
+function rewriteCssUrls(css: string, baseUrl: string): string {
+  return css.replace(
+    /url\(\s*(?:(["'])(.*?)\1|([^)]*))\s*\)/gi,
+    (original, _quote: string | undefined, quoted: string | undefined, unquoted: string) => {
+      const value = (quoted ?? unquoted ?? '').trim();
+      if (!value || value.startsWith('data:') || value.startsWith('#')) return original;
+      try {
+        const absolute = new URL(value, baseUrl);
+        return isOnionHostname(absolute.hostname)
+          ? `url("${onionBrowsePath(absolute.toString())}")`
+          : original;
+      } catch {
+        return original;
+      }
+    },
+  );
+}
+
+function rewriteSrcset(srcset: string, baseUrl: string): string {
+  return srcset
+    .split(',')
+    .map((candidate) => {
+      const match = /^\s*(\S+)(\s+.*)?$/.exec(candidate);
+      if (!match?.[1]) return candidate;
+      try {
+        const absolute = new URL(match[1], baseUrl);
+        if (!isOnionHostname(absolute.hostname)) return candidate;
+        return `${onionBrowsePath(absolute.toString())}${match[2] ?? ''}`;
+      } catch {
+        return candidate;
+      }
+    })
+    .join(',');
+}
+
 function rewriteOnionLinks(html: string, baseUrl: string): string {
   const $ = cheerio.load(html);
-  const attrs = ['href', 'src', 'action'] as const;
+  $('base').remove();
+  const attrs = ['href', 'src', 'action', 'poster', 'data', 'formaction'] as const;
   for (const attr of attrs) {
     $(`[${attr}]`).each((_, el) => {
       const value = $(el).attr(attr);
@@ -35,10 +71,22 @@ function rewriteOnionLinks(html: string, baseUrl: string): string {
       } catch {
         return;
       }
-      if (!absolute.hostname.toLowerCase().endsWith('.onion')) return;
+      if (!isOnionHostname(absolute.hostname)) return;
       $(el).attr(attr, onionBrowsePath(absolute.toString()));
     });
   }
+
+  $('[srcset]').each((_, el) => {
+    const value = $(el).attr('srcset');
+    if (value) $(el).attr('srcset', rewriteSrcset(value, baseUrl));
+  });
+  $('[style]').each((_, el) => {
+    const value = $(el).attr('style');
+    if (value) $(el).attr('style', rewriteCssUrls(value, baseUrl));
+  });
+  $('style').each((_, el) => {
+    $(el).text(rewriteCssUrls($(el).text(), baseUrl));
+  });
 
   // Strip meta refresh to clearnet; keep onion refreshes rewritten.
   $('meta[http-equiv="refresh"]').each((_, el) => {
@@ -47,7 +95,7 @@ function rewriteOnionLinks(html: string, baseUrl: string): string {
     if (!match?.[1]) return;
     try {
       const target = new URL(match[1].trim().replace(/^['"]|['"]$/g, ''), baseUrl);
-      if (target.hostname.toLowerCase().endsWith('.onion')) {
+      if (isOnionHostname(target.hostname)) {
         $(el).attr('content', content.replace(match[1], onionBrowsePath(target.toString())));
       } else {
         $(el).remove();
@@ -90,12 +138,22 @@ export async function browseOnion(rawUrl: string, options: BrowseOptions): Promi
       timeoutMs: options.timeoutMs ?? 45_000,
       signal: options.signal,
       maxBytes: options.maxBytes ?? 2 * 1024 * 1024,
+      validateRedirect: (target) => isOnionHostname(target.hostname),
     });
 
     const contentType = result.headers.get('content-type') ?? 'application/octet-stream';
     if (/text\/html|application\/xhtml\+xml/i.test(contentType)) {
       const html = rewriteOnionLinks(result.body.toString('utf8'), result.finalUrl);
       return { kind: 'html', status: result.status || 200, html, finalUrl: result.finalUrl };
+    }
+    if (/text\/css/i.test(contentType)) {
+      return {
+        kind: 'raw',
+        status: result.status || 200,
+        contentType,
+        body: Buffer.from(rewriteCssUrls(result.body.toString('utf8'), result.finalUrl)),
+        finalUrl: result.finalUrl,
+      };
     }
     return {
       kind: 'raw',

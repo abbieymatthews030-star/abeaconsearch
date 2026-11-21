@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
+  apiUrl,
   type AnswerConfidence,
   type AnswerResponse,
   type AnswerSource,
@@ -1298,7 +1299,11 @@ function SearchView({
           <li key={hit.id} className="result" data-search-score={hit.score}>
             <h3 className="result__title">
               {hit.url ? (
-                <a href={hit.url} target={openInNewTab ? '_blank' : undefined} rel="noreferrer">
+                <a
+                  href={apiUrl(hit.url)}
+                  target={openInNewTab ? '_blank' : undefined}
+                  rel="noreferrer"
+                >
                   <span dangerouslySetInnerHTML={{ __html: hit.title }} />
                 </a>
               ) : (
