@@ -8,4 +8,25 @@ Disallow: /api/index
 Disallow: /api/settings
 Disallow: /api/providers
 
+# Crawl delay for respectful crawling
+Crawl-delay: 1
+Request-rate: 1/1s
+
+# Sitemaps
 Sitemap: https://abeaconsearch.com/sitemap.xml
+
+# Google-specific crawlers
+User-agent: Googlebot
+Allow: /
+Priority: 1
+
+# Bing-specific crawlers
+User-agent: Bingbot
+Allow: /
+Priority: 0.9
+
+# Disallow bad bots
+User-agent: AhrefsBot
+User-agent: SemrushBot
+User-agent: DotBot
+Disallow: /
