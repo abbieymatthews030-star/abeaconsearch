@@ -33,6 +33,7 @@ import {
   type SettingDefinition,
   type SettingSection,
 } from './settings-registry';
+import { buildSearchSuggestions, type SearchSuggestion } from './search-suggestions';
 
 type Tab = 'search' | 'history' | 'about' | 'privacy' | 'settings';
 
@@ -388,6 +389,7 @@ export function App(): JSX.Element {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [input, setInput] = useState(() => initialQueryFromUrl());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const recentSearchQueries = useMemo(() => history.map((entry) => entry.query), [history]);
   const [torMode, setTorMode] = useState(false);
   const clientSettings = useClientSettings();
 
@@ -603,6 +605,7 @@ export function App(): JSX.Element {
         {tab === 'search' && (
           <SearchView
             input={input}
+            recentQueries={recentSearchQueries}
             onInputChange={setInput}
             onCommit={recordHistory}
             health={health}
@@ -670,6 +673,7 @@ const SORT_OPTIONS: Array<[SearchSort, string]> = [
 
 function SearchView({
   input,
+  recentQueries,
   onInputChange,
   onCommit,
   health,
@@ -680,6 +684,7 @@ function SearchView({
   siteName,
 }: {
   input: string;
+  recentQueries: string[];
   onInputChange: (value: string) => void;
   onCommit: (query: string, kind: QueryKind) => void;
   health: HealthResponse | null;
@@ -724,7 +729,22 @@ function SearchView({
   const lastRecordedRef = useRef<string | null>(null);
 
   const suggestQuery = useDebounced(input, 120);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestionResult, setSuggestionResult] = useState<{
+    query: string;
+    values: string[];
+  }>({ query: '', values: [] });
+  const indexedSuggestions = useMemo(
+    () =>
+      suggestionResult.query === suggestQuery.trim() ? suggestionResult.values : [],
+    [suggestQuery, suggestionResult],
+  );
+  const suggestions = useMemo(
+    () =>
+      showSuggestions
+        ? buildSearchSuggestions(suggestQuery, indexedSuggestions, recentQueries)
+        : [],
+    [indexedSuggestions, recentQueries, showSuggestions, suggestQuery],
+  );
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(-1);
 
@@ -924,14 +944,17 @@ function SearchView({
   useEffect(() => {
     const q = suggestQuery.trim();
     if (!showSuggestions || q.length < 2) {
-      setSuggestions([]);
+      setSuggestionResult({ query: q, values: [] });
       return;
     }
     const controller = new AbortController();
     api
       .suggest(q, controller.signal)
       .then((res) =>
-        setSuggestions(res.suggestions.filter((s) => s.toLowerCase() !== q.toLowerCase())),
+        setSuggestionResult({
+          query: q,
+          values: res.suggestions.filter((s) => s.toLowerCase() !== q.toLowerCase()),
+        }),
       )
       .catch(() => {
         /* suggestions are a convenience; ignore failures */
@@ -1087,7 +1110,7 @@ function SearchView({
             event.preventDefault();
             setActiveSuggestion((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
           } else if (event.key === 'Enter') {
-            const chosen = open ? suggestions[activeSuggestion] : undefined;
+            const chosen = open ? suggestions[activeSuggestion]?.value : undefined;
             if (!chosen) return;
             event.preventDefault();
             pickSuggestion(chosen);
@@ -1108,8 +1131,8 @@ function SearchView({
       </button>
       {suggestOpen && input.trim().length >= 2 && suggestions.length > 0 && (
         <ul className="suggest" role="listbox" id="search-suggest-list">
-          {suggestions.map((s, i) => (
-            <li key={s}>
+          {suggestions.map((suggestion: SearchSuggestion, i) => (
+            <li key={`${suggestion.source}:${suggestion.value}`}>
               <button
                 type="button"
                 id={`search-suggest-${i}`}
@@ -1119,10 +1142,13 @@ function SearchView({
                 onMouseEnter={() => setActiveSuggestion(i)}
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  pickSuggestion(s);
+                  pickSuggestion(suggestion.value);
                 }}
               >
-                {s}
+                {suggestion.value}
+                {suggestion.source === 'recent' && (
+                  <span className="suggest__source">Recent</span>
+                )}
               </button>
             </li>
           ))}
