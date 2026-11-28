@@ -11,7 +11,7 @@ single JSON file. Runs anywhere Node.js 20+ runs, or as a Docker container.
 - **UK number plate checker** with automatic backend checks — format, age identifier, DVLA region, and (with free API keys) DVLA tax/MOT status and DVSA MOT history.
 - **MCP server** (`beacon-mcp`, built on [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) exposing the plate checker and the index as tools for Claude & other MCP clients.
 - **REST API** built on [Fastify](https://fastify.dev/) with schema validation.
-- **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites.
+- **Web UI** (React + Vite) for searching, plate checks, adding documents and crawling sites. Search autocomplete can reuse recent queries stored locally in the browser.
 - **Tor mode** — one-click onion / Tor-directory search. Results open through Beacon’s
   SOCKS5h proxy (Compose includes a Tor sidecar), so users do not need Tor Browser.
   Proxied pages are sandboxed: scripts and forms are disabled for safety, so some

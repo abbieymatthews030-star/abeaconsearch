@@ -775,7 +775,9 @@ button {
 }
 
 .suggest button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -785,6 +787,14 @@ button {
   font-size: 0.85rem;
   padding: 0.4rem 0.85rem;
   cursor: pointer;
+}
+
+.suggest__source {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .suggest button:hover,
