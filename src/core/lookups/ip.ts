@@ -1,14 +1,20 @@
 import { reverse } from 'node:dns/promises';
 import { DEFAULT_LOOKUP_TIMEOUT_MS } from '../config.js';
-import { entityWithRole, fetchRdap, vcardField } from './rdap.js';
+import { entityWithRole, eventDate, fetchRdap, vcardField } from './rdap.js';
 
 export interface IpLookup {
   ip: string;
   reverseDns: string[];
   network?: string;
+  networkType?: string;
+  networkRange?: string;
+  cidrBlocks: string[];
+  parentHandle?: string;
   country?: string;
   organization?: string;
   rdapHandle?: string;
+  registeredDate?: string;
+  updatedDate?: string;
   /** Things that came back empty or unavailable — not errors, just gaps. */
   notices: string[];
 }
@@ -28,10 +34,28 @@ export async function lookupIp(ip: string, opts: { timeoutMs?: number } = {}): P
   let country: string | undefined;
   let organization: string | undefined;
   let rdapHandle: string | undefined;
+  let networkType: string | undefined;
+  let networkRange: string | undefined;
+  let parentHandle: string | undefined;
+  let registeredDate: string | undefined;
+  let updatedDate: string | undefined;
+  let cidrBlocks: string[] = [];
   if (rdap) {
     network = rdap.name;
     country = rdap.country;
     rdapHandle = rdap.handle;
+    networkType = rdap.type;
+    parentHandle = rdap.parentHandle;
+    if (rdap.startAddress || rdap.endAddress) {
+      networkRange = [rdap.startAddress, rdap.endAddress].filter(Boolean).join(' – ');
+    }
+    cidrBlocks =
+      rdap.cidr0_cidrs?.flatMap((cidr) => {
+        const prefix = cidr.v4prefix ?? cidr.v6prefix;
+        return prefix && typeof cidr.length === 'number' ? [`${prefix}/${cidr.length}`] : [];
+      }) ?? [];
+    registeredDate = eventDate(rdap.events, 'registration');
+    updatedDate = eventDate(rdap.events, 'last changed');
     const org =
       entityWithRole(rdap.entities, 'registrant') ??
       entityWithRole(rdap.entities, 'administrative');
@@ -40,5 +64,19 @@ export async function lookupIp(ip: string, opts: { timeoutMs?: number } = {}): P
     notices.push('network data (RDAP) unavailable for this address');
   }
 
-  return { ip, reverseDns, network, country, organization, rdapHandle, notices };
+  return {
+    ip,
+    reverseDns,
+    network,
+    networkType,
+    networkRange,
+    cidrBlocks,
+    parentHandle,
+    country,
+    organization,
+    rdapHandle,
+    registeredDate,
+    updatedDate,
+    notices,
+  };
 }

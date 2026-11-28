@@ -16,6 +16,15 @@ export interface RdapResponse {
   name?: string;
   handle?: string;
   country?: string;
+  startAddress?: string;
+  endAddress?: string;
+  type?: string;
+  parentHandle?: string;
+  cidr0_cidrs?: Array<{
+    v4prefix?: string;
+    v6prefix?: string;
+    length?: number;
+  }>;
   entities?: RdapEntity[];
   events?: Array<{ eventAction?: string; eventDate?: string }>;
 }

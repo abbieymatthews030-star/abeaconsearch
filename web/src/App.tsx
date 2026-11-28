@@ -1608,13 +1608,31 @@ function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
             )}
             {data.network && (
               <div>
-                <dt>Network</dt>
+                <dt>Network name</dt>
                 <dd>{data.network}</dd>
+              </div>
+            )}
+            {data.networkType && (
+              <div>
+                <dt>Network type</dt>
+                <dd>{data.networkType}</dd>
+              </div>
+            )}
+            {data.networkRange && (
+              <div>
+                <dt>Address range</dt>
+                <dd>{data.networkRange}</dd>
+              </div>
+            )}
+            {data.cidrBlocks.length > 0 && (
+              <div>
+                <dt>CIDR</dt>
+                <dd>{data.cidrBlocks.join(', ')}</dd>
               </div>
             )}
             {data.country && (
               <div>
-                <dt>Country</dt>
+                <dt>Registry country code</dt>
                 <dd>{data.country}</dd>
               </div>
             )}
@@ -1630,6 +1648,24 @@ function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
                 <dd>{data.rdapHandle}</dd>
               </div>
             )}
+            {data.parentHandle && (
+              <div>
+                <dt>Parent network</dt>
+                <dd>{data.parentHandle}</dd>
+              </div>
+            )}
+            {data.registeredDate && (
+              <div>
+                <dt>Registered</dt>
+                <dd>{formatLookupDate(data.registeredDate)}</dd>
+              </div>
+            )}
+            {data.updatedDate && (
+              <div>
+                <dt>Last changed</dt>
+                <dd>{formatLookupDate(data.updatedDate)}</dd>
+              </div>
+            )}
           </dl>
           {data.notices.length > 0 && (
             <ul className="primary-card__notices">
@@ -1638,7 +1674,20 @@ function IpCard({ primary }: { primary: IpPrimary }): JSX.Element {
               ))}
             </ul>
           )}
-          <p className="primary-card__sources">Sources: Reverse DNS · RDAP</p>
+          <p className="primary-card__sources">
+            Sources: Reverse DNS · RDAP ·{' '}
+            <a
+              href={`https://rdap.org/ip/${encodeURIComponent(primary.ip)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open registration record
+            </a>
+          </p>
+          <p className="primary-card__sources">
+            Registry details describe the network allocation, not a precise location or an
+            individual user.
+          </p>
         </>
       )}
     </section>
